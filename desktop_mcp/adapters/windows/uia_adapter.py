@@ -333,7 +333,7 @@ class WindowsUIAutomationAdapter:
         flat_controls = []
 
         def flatten(ctrls: list[Control]) -> None:
-            for c in ctrs:
+            for c in ctrls:
                 flat_controls.append(c)
                 flatten(c.children)
 

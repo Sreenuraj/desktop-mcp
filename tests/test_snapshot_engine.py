@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from unittest import mock
 
+import pytest
+
 from desktop_mcp.adapters.windows.uia_adapter import WindowsUIAutomationAdapter
 from desktop_mcp.models.control import Control
 from desktop_mcp.server.mcp_server import DesktopMCPServer
@@ -183,3 +185,50 @@ def test_snapshot_performance():
     # Ensure traversal is extremely fast (well under the 500ms target)
     print(f"Elapsed time for 100 nodes traversal: {elapsed:.2f}ms")
     assert elapsed < 100.0
+
+
+def test_find_controls_on_adapter():
+    from desktop_mcp.errors import ControlNotFoundError
+    adapter = WindowsUIAutomationAdapter()
+    adapter._check_platform = mock.Mock()
+
+    # Setup mock window with hierarchical controls
+    mock_window = mock.Mock()
+    mock_window.window_id = "win_123"
+
+    # Hierarchical controls: TabControl with child Button
+    btn = Control(id="btn_1", name="Submit", type="Button")
+    tab = Control(id="tab_1", name="Main", type="TabControl", children=[btn])
+    mock_window.controls = [tab]
+
+    adapter.get_window = mock.Mock(return_value=mock_window)
+
+    # 1. find_controls without type (should return all flat controls: tab and btn)
+    controls = adapter.find_controls("win_123")
+    assert len(controls) == 2
+    assert controls[0].id == "tab_1"
+    assert controls[1].id == "btn_1"
+
+    # 2. find_controls with type Button
+    btn_controls = adapter.find_controls("win_123", type="Button")
+    assert len(btn_controls) == 1
+    assert btn_controls[0].id == "btn_1"
+
+
+def test_find_control_on_adapter():
+    from desktop_mcp.errors import ControlNotFoundError
+    adapter = WindowsUIAutomationAdapter()
+    adapter._check_platform = mock.Mock()
+
+    mock_window = mock.Mock()
+    btn = Control(id="btn_1", name="Submit Button", type="Button")
+    mock_window.controls = [btn]
+    adapter.get_window = mock.Mock(return_value=mock_window)
+
+    # find_control matching text
+    ctrl = adapter.find_control("win_123", text="Submit", type="Button")
+    assert ctrl.id == "btn_1"
+
+    # find_control raises ControlNotFoundError if not matched
+    with pytest.raises(ControlNotFoundError):
+        adapter.find_control("win_123", text="Save")
