@@ -18,6 +18,9 @@ windows = [
   "mss>=9.0",
 ]
 
+[project.scripts]
+desktop-mcp = "desktop_mcp.server.stdio:main"
+
 [build-system]
 requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
