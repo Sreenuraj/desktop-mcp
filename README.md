@@ -27,6 +27,25 @@ PostQode Desktop MCP is a Model Context Protocol (MCP) server designed for AI-dr
 
 ## Installation
 
+### Option A: Quick Setup (Recommended)
+
+Run the setup script for your platform to automatically create the virtual environment, install dependencies, and generate your custom MCP JSON config block:
+
+#### Windows (PowerShell)
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.\setup.ps1
+```
+
+#### macOS / Linux
+```bash
+./setup.sh
+```
+
+---
+
+### Option B: Manual Installation
+
 Create a virtual environment and install the package:
 
 ```bash

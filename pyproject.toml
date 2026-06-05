@@ -25,6 +25,9 @@ desktop-mcp = "desktop_mcp.server.stdio:main"
 requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["desktop_mcp*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
