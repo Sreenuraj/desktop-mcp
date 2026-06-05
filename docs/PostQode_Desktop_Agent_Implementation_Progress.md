@@ -229,24 +229,23 @@ Original goal:
 - Control hierarchy
 - Normalized control model
 
-Current status: Partially complete
+Current status: Complete
 
 Completed:
 
 - `Control` model
 - `Window` model
-- `window_snapshot`
-- `desktop_snapshot`
-- `control_tree`
+- `window_snapshot` (returns flat array of controls)
+- `desktop_snapshot` (returns flat array of controls per window)
+- `control_tree` (returns nested hierarchical control tree)
 - In-memory normalized controls
-
-Remaining:
-
-- Build Windows UI Automation tree traversal
-- Normalize UIA control types into Desktop MCP control types
+- Build Windows UI Automation tree traversal (recursive traversal implemented)
+- Normalize UIA control types into Desktop MCP control types (`UIA_CONTROL_TYPE_MAP` normalization)
 - Capture automation IDs, names, bounds, enabled/visible/focused state, and supported patterns from real controls
-- Add snapshot filtering for large trees
-- Add snapshot performance tests
+- Add snapshot filtering for large trees (filters structural layout components like anonymous panes/groups)
+- Add snapshot performance tests (`tests/test_snapshot_engine.py`)
+
+Remaining: None
 
 ## Phase 3 - Interaction Engine
 

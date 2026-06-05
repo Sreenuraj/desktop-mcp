@@ -149,11 +149,36 @@ class DesktopMCPServer:
         return {}
 
     def desktop_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
-        windows = [window.to_dict(include_controls=True) for window in self.adapter.list_windows()]
+        windows = []
+        for win in self.adapter.list_windows():
+            data = win.to_dict(include_controls=False)
+            data["controls"] = self._flatten_controls(win.controls)
+            windows.append(data)
         return {"applications": [], "windows": windows}
 
     def window_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self.adapter.get_window(self._required(payload, "window_id")).to_dict(include_controls=True)
+        window = self.adapter.get_window(self._required(payload, "window_id"))
+        data = window.to_dict(include_controls=False)
+        data["controls"] = self._flatten_controls(window.controls)
+        return data
+
+    def _flatten_controls(self, controls: list[Any]) -> list[dict[str, Any]]:
+        flat = []
+        def helper(ctrls: list[Any]) -> None:
+            for c in ctrls:
+                if hasattr(c, "to_dict"):
+                    data = c.to_dict(include_children=False)
+                    flat.append(data)
+                    if hasattr(c, "children") and c.children:
+                        helper(c.children)
+                elif isinstance(c, dict):
+                    data = c.copy()
+                    children = data.pop("children", None)
+                    flat.append(data)
+                    if children:
+                        helper(children)
+        helper(controls)
+        return flat
 
     def control_tree(self, payload: dict[str, Any]) -> dict[str, Any]:
         window = self.adapter.get_window(self._required(payload, "window_id"))

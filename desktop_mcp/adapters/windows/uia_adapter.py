@@ -40,6 +40,50 @@ except ImportError:
     PyWinApplication = None
     PyWinDesktop = None
 
+# A map of UIA control types to standard, agent-friendly Desktop MCP control types
+UIA_CONTROL_TYPE_MAP = {
+    "Button": "Button",
+    "Calendar": "Calendar",
+    "CheckBox": "CheckBox",
+    "ComboBox": "ComboBox",
+    "Custom": "Custom",
+    "DataGrid": "DataGrid",
+    "DataItem": "DataItem",
+    "Document": "Document",
+    "Edit": "Edit",
+    "Group": "Group",
+    "Header": "Header",
+    "HeaderItem": "HeaderItem",
+    "Hyperlink": "Hyperlink",
+    "Image": "Image",
+    "List": "ListBox",
+    "ListItem": "ListItem",
+    "Menu": "Menu",
+    "MenuBar": "MenuBar",
+    "MenuItem": "MenuItem",
+    "Pane": "Pane",
+    "ProgressBar": "ProgressBar",
+    "RadioButton": "RadioButton",
+    "ScrollBar": "ScrollBar",
+    "SemanticKey": "Key",
+    "Separator": "Separator",
+    "Slider": "Slider",
+    "Spinner": "Spinner",
+    "SplitButton": "SplitButton",
+    "StatusBar": "StatusBar",
+    "Tab": "TabControl",
+    "TabItem": "TabItem",
+    "Table": "Table",
+    "Text": "Text",
+    "Thumb": "Thumb",
+    "TitleBar": "TitleBar",
+    "ToolBar": "ToolBar",
+    "ToolTip": "ToolTip",
+    "Tree": "TreeView",
+    "TreeItem": "TreeViewItem",
+    "Window": "Window",
+}
+
 
 class WindowsUIAutomationAdapter:
     """Windows UI Automation adapter using pywinauto and comtypes.
@@ -175,13 +219,19 @@ class WindowsUIAutomationAdapter:
             application_id = f"app_{process_id}"
             active = win32gui.GetForegroundWindow() == handle
 
+            # Recursively build hierarchical controls starting from immediate children
             controls = []
-            for desc in win_wrapper.descendants():
-                try:
-                    control = self._map_control(desc)
-                    controls.append(control)
-                except Exception:
-                    continue
+            try:
+                for child in win_wrapper.children():
+                    controls.extend(self._build_control_tree(child))
+            except Exception:
+                # Robust fallback: extract a flat list of descendants
+                for desc in win_wrapper.descendants():
+                    try:
+                        if self._should_include_control(desc):
+                            controls.append(self._map_control(desc))
+                    except Exception:
+                        continue
 
             return Window(
                 window_id=window_id,
@@ -194,6 +244,76 @@ class WindowsUIAutomationAdapter:
             raise
         except Exception as exc:
             raise DesktopMCPError(f"Failed to get window {window_id}: {exc}") from exc
+
+    def _should_include_control(self, element: Any) -> bool:
+        """Filter out layout/formatting elements to keep tree snapshots AI-friendly."""
+        try:
+            info = element.element_info
+            ctrl_type = info.control_type or ""
+
+            # Interactive elements should always be included
+            if ctrl_type in (
+                "Button",
+                "CheckBox",
+                "ComboBox",
+                "Edit",
+                "RadioButton",
+                "Hyperlink",
+                "MenuItem",
+                "TabItem",
+                "TreeViewItem",
+            ):
+                return True
+
+            # Items with custom names or automation IDs are semantically useful
+            if info.name or info.automation_id:
+                return True
+
+            # If it's a grid, table, list box, tree view, or tab control, include it
+            if ctrl_type in ("Table", "DataGrid", "List", "Tree", "Tab"):
+                return True
+
+            # Filter out structural layout panes/groups with no semantic identifiers
+            if ctrl_type in ("Pane", "Group", "Custom", "Separator"):
+                return False
+
+            return True
+        except Exception:
+            return True
+
+    def _build_control_tree(
+        self, element: Any, current_depth: int = 0, max_depth: int = 8
+    ) -> list[Control]:
+        """Recursively traverse the UIA element hierarchy.
+
+        Filters out non-essential containers, lifting their semantic children up to keep tree shallow.
+        """
+        if current_depth > max_depth:
+            return []
+
+        try:
+            if not element.is_visible():
+                return []
+        except Exception:
+            pass
+
+        include = self._should_include_control(element)
+
+        child_controls = []
+        try:
+            for child in element.children():
+                child_controls.extend(
+                    self._build_control_tree(child, current_depth + 1, max_depth)
+                )
+        except Exception:
+            pass
+
+        if include:
+            control = self._map_control(element)
+            control.children = child_controls
+            return [control]
+        else:
+            return child_controls
 
     def find_control(
         self, window_id: str, text: str | None = None, type: str | None = None
@@ -208,10 +328,20 @@ class WindowsUIAutomationAdapter:
 
     def find_controls(self, window_id: str, type: str | None = None) -> list[Control]:
         self._check_platform()
+        # Flatten the control tree to allow searching
         window = self.get_window(window_id)
+        flat_controls = []
+
+        def flatten(ctrls: list[Control]) -> None:
+            for c in ctrs:
+                flat_controls.append(c)
+                flatten(c.children)
+
+        flatten(window.controls)
+
         if type is None:
-            return window.controls
-        return [c for c in window.controls if c.type.lower() == type.lower()]
+            return flat_controls
+        return [c for c in flat_controls if c.type.lower() == type.lower()]
 
     def get_control(self, control_id: str) -> Control:
         self._check_platform()
@@ -434,6 +564,10 @@ class WindowsUIAutomationAdapter:
         control_id = self._get_control_id(element)
         self._controls_cache[control_id] = element
 
+        # Normalize type
+        raw_type = info.control_type or ""
+        normalized_type = UIA_CONTROL_TYPE_MAP.get(raw_type, raw_type)
+
         patterns = []
         try:
             if hasattr(element, "invoke"):
@@ -471,7 +605,7 @@ class WindowsUIAutomationAdapter:
         return Control(
             id=control_id,
             name=info.name or "",
-            type=info.control_type or "",
+            type=normalized_type,
             automation_id=info.automation_id,
             enabled=element.is_enabled(),
             visible=element.is_visible(),
