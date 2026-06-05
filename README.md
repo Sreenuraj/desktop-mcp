@@ -68,7 +68,12 @@ python -m pip install -e ".[dev,windows]"
 
 ## Running the Server
 
-Run the stdio server directly from the command line:
+> [!NOTE]
+> You **do not** need to manually start or keep the server running in the background. Because this is a `stdio`-based MCP server, your AI client (e.g., Claude Desktop or Cursor) will automatically spawn the server process when it starts and stop it when it closes.
+>
+> Simply complete the setup steps, add the generated configuration to your client's settings, and the client will manage the lifecycle of the server for you.
+
+If you want to run the stdio server manually for debugging or testing:
 
 ```bash
 python -m desktop_mcp.server.stdio
