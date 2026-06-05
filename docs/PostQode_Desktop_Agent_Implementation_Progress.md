@@ -284,20 +284,19 @@ Original goal:
 - `control_exists`
 - `assert_control_state`
 
-Current status: Partially complete
+Current status: Complete
 
 Completed:
 
 - Tool routing
 - In-memory validation
 - Failure response behavior
+- Real wait/retry polling behavior with timeout parameter in `wait_for_control`
+- Better assertion result metadata (e.g. `expected` and `actual` text fields)
+- Validation evidence capture (automatically saving a desktop screenshot on assertion failure)
+- Unit and mock integration tests (`tests/test_validation_engine.py`)
 
-Remaining:
-
-- Real wait/retry behavior with timeout
-- Better assertion result metadata
-- Validation evidence capture
-- Integration tests against real Windows UI
+Remaining: None
 
 ## Phase 5 - Grid Framework
 

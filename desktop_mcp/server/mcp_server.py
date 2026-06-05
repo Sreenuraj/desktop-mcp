@@ -293,22 +293,51 @@ class DesktopMCPServer:
         return {"exists": True}
 
     def wait_for_control(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control = self.adapter.find_control(self._required(payload, "window_id"), payload.get("text"), payload.get("type"))
-        return {"control": control.to_dict()}
+        window_id = self._required(payload, "window_id")
+        text = payload.get("text")
+        type_ = payload.get("type")
+        timeout = float(payload.get("timeout", 10.0))
+
+        import time
+        start_time = time.perf_counter()
+        while True:
+            try:
+                control = self.adapter.find_control(window_id, text, type_)
+                return {"control": control.to_dict()}
+            except DesktopMCPError:
+                if time.perf_counter() - start_time >= timeout:
+                    raise
+                time.sleep(0.5)
 
     def assert_text(self, payload: dict[str, Any]) -> dict[str, Any]:
+        control_id = self._required(payload, "control_id")
         expected = self._required(payload, "expected")
-        actual = self.adapter.get_control(self._required(payload, "control_id")).value or ""
-        if actual != expected:
-            raise InvalidRequestError(f"Expected text {expected!r}, got {actual!r}")
-        return {"passed": True}
+        try:
+            actual = self.adapter.get_control(control_id).value or ""
+            if actual != expected:
+                raise InvalidRequestError(f"Expected text {expected!r}, got {actual!r}")
+            return {"passed": True, "expected": expected, "actual": actual}
+        except Exception:
+            self._capture_failure_evidence(control_id)
+            raise
 
     def assert_control_state(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control = self.adapter.get_control(self._required(payload, "control_id"))
-        for field in ("enabled", "visible", "focused"):
-            if field in payload and getattr(control, field) != payload[field]:
-                raise InvalidRequestError(f"Expected {field}={payload[field]!r}")
-        return {"passed": True}
+        control_id = self._required(payload, "control_id")
+        try:
+            control = self.adapter.get_control(control_id)
+            for field in ("enabled", "visible", "focused"):
+                if field in payload and getattr(control, field) != payload[field]:
+                    raise InvalidRequestError(f"Expected {field}={payload[field]!r}, got {getattr(control, field)!r}")
+            return {"passed": True}
+        except Exception:
+            self._capture_failure_evidence(control_id)
+            raise
+
+    def _capture_failure_evidence(self, control_id: str) -> None:
+        try:
+            self.adapter.capture_desktop()
+        except Exception:
+            pass
 
     def assert_table_row(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.find_row(payload)
