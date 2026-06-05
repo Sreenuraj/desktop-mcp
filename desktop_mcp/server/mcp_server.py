@@ -578,14 +578,21 @@ class DesktopMCPServer:
         return {"recording": False}
 
     def wait_for_browser(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"window_id": "win_browser_001"}
+        session_id = payload.get("session_id")
+        if session_id:
+            self.sessions.get_session(session_id)
+
+        timeout = float(payload.get("timeout", 60.0))
+        return self.adapter.wait_for_browser(timeout=timeout)
 
     def attach_browser_window(self, payload: dict[str, Any]) -> dict[str, Any]:
-        title_contains = str(payload.get("title_contains", "")).lower()
-        for window in self.adapter.list_windows():
-            if title_contains and title_contains in window.title.lower():
-                return {"window_id": window.window_id}
-        return {"window_id": "win_browser_001"}
+        session_id = payload.get("session_id")
+        if session_id:
+            self.sessions.get_session(session_id)
+
+        title_contains = payload.get("title_contains")
+        title_str = str(title_contains) if title_contains is not None else None
+        return self.adapter.attach_browser_window(title_contains=title_str)
 
     def _interaction(
         self, action: str, payload: dict[str, Any], **kwargs: Any

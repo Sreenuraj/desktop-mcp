@@ -270,3 +270,61 @@ class InMemoryDesktopAdapter:
                 with open(path, "w") as f:
                     f.write("dummy gif content")
         return {"recording": False, "artifact": path}
+
+    def wait_for_browser(self, timeout: float = 60.0) -> dict:
+        browser_win_id = "win_browser_001"
+        if browser_win_id not in self._windows:
+            controls = [
+                Control(
+                    id="txt_email",
+                    automation_id="email",
+                    name="Email Address",
+                    type="Edit",
+                    value="",
+                ),
+                Control(
+                    id="txt_password",
+                    automation_id="passwd",
+                    name="Password",
+                    type="Edit",
+                    value="",
+                ),
+                Control(
+                    id="btn_signin",
+                    automation_id="submit",
+                    name="Sign In",
+                    type="Button",
+                    patterns=["InvokePattern"],
+                ),
+            ]
+            app = Application(
+                application_id="app_browser",
+                process_id=9999,
+                path="msedge.exe",
+            )
+            window = Window(
+                window_id=browser_win_id,
+                application_id=app.application_id,
+                title="Sign in to your account - Microsoft Edge",
+                active=True,
+                controls=controls,
+            )
+            self._applications[app.application_id] = app
+            self._windows[window.window_id] = window
+            for c in controls:
+                self._controls[c.id] = c
+
+        return {"window_id": browser_win_id}
+
+    def attach_browser_window(self, title_contains: str | None = None) -> dict:
+        browser_win_id = "win_browser_001"
+        self.wait_for_browser()
+        if (
+            title_contains
+            and title_contains.lower()
+            not in self._windows[browser_win_id].title.lower()
+        ):
+            raise WindowNotFoundError(
+                f"Browser window with title containing " f"'{title_contains}' not found"
+            )
+        return {"window_id": browser_win_id}

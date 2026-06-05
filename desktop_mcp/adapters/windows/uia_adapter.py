@@ -734,6 +734,95 @@ class WindowsUIAutomationAdapter:
         self._recording_frames = []
         return {"recording": False, "artifact": path}
 
+    def wait_for_browser(self, timeout: float = 60.0) -> dict:
+        self._check_platform()
+        import time
+
+        start = time.perf_counter()
+        while time.perf_counter() - start < timeout:
+            for win in self.list_windows():
+                try:
+                    pid = (
+                        int(win.application_id.split("_")[1])
+                        if win.application_id and "_" in win.application_id
+                        else None
+                    )
+                    if pid:
+                        proc_name = psutil.Process(pid).name().lower()
+                        if any(
+                            b in proc_name
+                            for b in (
+                                "chrome",
+                                "msedge",
+                                "edge",
+                                "firefox",
+                                "browser",
+                                "iexplore",
+                            )
+                        ):
+                            return {"window_id": win.window_id}
+                except Exception:
+                    pass
+
+                title_lower = win.title.lower()
+                if any(
+                    b in title_lower
+                    for b in (
+                        " - google chrome",
+                        " - microsoft edge",
+                        " - firefox",
+                    )
+                ):
+                    return {"window_id": win.window_id}
+            time.sleep(0.5)
+
+        raise WindowNotFoundError("Browser window could not be located within timeout")
+
+    def attach_browser_window(self, title_contains: str | None = None) -> dict:
+        self._check_platform()
+        for win in self.list_windows():
+            if title_contains and title_contains.lower() not in win.title.lower():
+                continue
+            try:
+                pid = (
+                    int(win.application_id.split("_")[1])
+                    if win.application_id and "_" in win.application_id
+                    else None
+                )
+                if pid:
+                    proc_name = psutil.Process(pid).name().lower()
+                    if any(
+                        b in proc_name
+                        for b in (
+                            "chrome",
+                            "msedge",
+                            "edge",
+                            "firefox",
+                            "browser",
+                            "iexplore",
+                        )
+                    ):
+                        return {"window_id": win.window_id}
+            except Exception:
+                pass
+
+            title_lower = win.title.lower()
+            if any(
+                b in title_lower
+                for b in (
+                    " - google chrome",
+                    " - microsoft edge",
+                    " - firefox",
+                )
+            ):
+                return {"window_id": win.window_id}
+
+        for win in self.list_windows():
+            if title_contains and title_contains.lower() in win.title.lower():
+                return {"window_id": win.window_id}
+
+        raise WindowNotFoundError("Browser window not found")
+
     def _resolve_window(self, window_id: str) -> Any:
         try:
             handle = (

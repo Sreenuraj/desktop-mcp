@@ -56,3 +56,9 @@ class DesktopAdapter(Protocol):
 
     def capture_desktop(self, path: str | None = None) -> dict:
         ...
+
+    def wait_for_browser(self, timeout: float = 60.0) -> dict:
+        ...
+
+    def attach_browser_window(self, title_contains: str | None = None) -> dict:
+        ...
