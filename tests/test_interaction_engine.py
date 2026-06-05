@@ -8,14 +8,16 @@ from desktop_mcp.errors import ControlDisabledError, UnsupportedControlError
 
 
 class MockInteractiveElement:
-    def __init__(self, name: str = "", control_type: str = "Button", enabled: bool = True) -> None:
+    def __init__(
+        self, name: str = "", control_type: str = "Button", enabled: bool = True
+    ) -> None:
         self.element_info = mock.Mock()
         self.element_info.name = name
         self.element_info.control_type = control_type
         self.element_info.automation_id = f"id_{name}"
         self.element_info.runtime_id = (42, id(self))
         self.element_info.focused = False
-        
+
         self._enabled = enabled
         self._visible = True
         self._value = ""

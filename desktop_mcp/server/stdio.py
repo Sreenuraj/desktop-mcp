@@ -7,7 +7,9 @@ from typing import Any, TextIO
 from desktop_mcp.server.mcp_server import DesktopMCPServer
 
 
-def handle_request(server: DesktopMCPServer, request: dict[str, Any]) -> dict[str, Any] | None:
+def handle_request(
+    server: DesktopMCPServer, request: dict[str, Any]
+) -> dict[str, Any] | None:
     request_id = request.get("id")
     method = request.get("method")
     params = request.get("params") or {}
@@ -16,6 +18,7 @@ def handle_request(server: DesktopMCPServer, request: dict[str, Any]) -> dict[st
         return None
 
     try:
+        result: dict[str, Any]
         if method == "initialize":
             result = {
                 "protocolVersion": "2024-11-05",
@@ -35,6 +38,10 @@ def handle_request(server: DesktopMCPServer, request: dict[str, Any]) -> dict[st
             }
         elif method == "tools/call":
             tool_name = params.get("name")
+            if not isinstance(tool_name, str):
+                return _error(
+                    request_id, -32602, "Invalid params: name must be a string"
+                )
             arguments = params.get("arguments") or {}
             result = {
                 "content": [

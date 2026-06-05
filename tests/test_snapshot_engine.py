@@ -11,7 +11,9 @@ from desktop_mcp.server.mcp_server import DesktopMCPServer
 
 
 class MockElementInfo:
-    def __init__(self, control_type: str, name: str = "", automation_id: str | None = None) -> None:
+    def __init__(
+        self, control_type: str, name: str = "", automation_id: str | None = None
+    ) -> None:
         self.control_type = control_type
         self.name = name
         self.automation_id = automation_id
@@ -54,7 +56,7 @@ class MockElement:
 
 def test_control_type_normalization():
     adapter = WindowsUIAutomationAdapter()
-    
+
     # Test mapping standard UIA control types
     btn_element = MockElement("Button")
     btn_control = adapter._map_control(btn_element)
@@ -77,12 +79,29 @@ def test_should_include_control_filtering():
     assert adapter._should_include_control(MockElement("Edit")) is True
 
     # Anonymous layout panels should be filtered out
-    assert adapter._should_include_control(MockElement("Pane", name="", automation_id=None)) is False
-    assert adapter._should_include_control(MockElement("Group", name="", automation_id=None)) is False
+    assert (
+        adapter._should_include_control(
+            MockElement("Pane", name="", automation_id=None)
+        )
+        is False
+    )
+    assert (
+        adapter._should_include_control(
+            MockElement("Group", name="", automation_id=None)
+        )
+        is False
+    )
 
     # Layout panels with automation ID or custom name should be included
-    assert adapter._should_include_control(MockElement("Pane", name="MainPanel")) is True
-    assert adapter._should_include_control(MockElement("Group", automation_id="group_settings")) is True
+    assert (
+        adapter._should_include_control(MockElement("Pane", name="MainPanel")) is True
+    )
+    assert (
+        adapter._should_include_control(
+            MockElement("Group", automation_id="group_settings")
+        )
+        is True
+    )
 
 
 def test_recursive_tree_building_and_lifting():
@@ -91,10 +110,10 @@ def test_recursive_tree_building_and_lifting():
     # Create a hierarchy: Window -> Filtered Pane -> Button
     btn = MockElement("Button", name="Save")
     pane = MockElement("Pane", name="", automation_id=None, children=[btn])
-    
+
     # Traverse starting from pane
     nodes = adapter._build_control_tree(pane)
-    
+
     # Pane is filtered, so its child Button should be lifted up to the top level
     assert len(nodes) == 1
     assert nodes[0].name == "Save"
@@ -104,19 +123,21 @@ def test_recursive_tree_building_and_lifting():
 def test_server_flat_snapshot_vs_hierarchical_tree():
     # Setup mock adapter returning hierarchical controls
     mock_adapter = mock.Mock()
-    
+
     # Create top level controls: TabControl (with child TabItem -> Button)
     btn = Control(id="btn_ok", name="OK", type="Button")
     tab_item = Control(id="tab_item_1", name="Tab 1", type="TabItem", children=[btn])
-    tab_ctrl = Control(id="tab_ctrl", name="Tabs", type="TabControl", children=[tab_item])
-    
+    tab_ctrl = Control(
+        id="tab_ctrl", name="Tabs", type="TabControl", children=[tab_item]
+    )
+
     mock_window = mock.Mock()
     mock_window.window_id = "win_123"
     mock_window.title = "Test Window"
     mock_window.application_id = "app_123"
     mock_window.active = True
     mock_window.controls = [tab_ctrl]
-    
+
     # Stub Window serialization
     def to_dict_mock(include_controls=False):
         return {
@@ -125,6 +146,7 @@ def test_server_flat_snapshot_vs_hierarchical_tree():
             "application_id": "app_123",
             "active": True,
         }
+
     mock_window.to_dict = to_dict_mock
 
     mock_adapter.get_window.return_value = mock_window
@@ -133,7 +155,9 @@ def test_server_flat_snapshot_vs_hierarchical_tree():
     server.call_tool("create_session", {})
 
     # 1. Test window_snapshot - should be flat
-    response = server.call_tool("window_snapshot", {"session_id": "session_001", "window_id": "win_123"})
+    response = server.call_tool(
+        "window_snapshot", {"session_id": "session_001", "window_id": "win_123"}
+    )
     assert response["success"] is True
     controls = response["data"]["controls"]
     # Should contain all 3 controls in flat form
@@ -145,19 +169,35 @@ def test_server_flat_snapshot_vs_hierarchical_tree():
     # 2. Test control_tree - should be hierarchical
     # Mock to_dict on control models to behave like actual implementation
     tab_ctrl.to_dict = lambda include_children=False: {
-        "id": "tab_ctrl", "name": "Tabs", "type": "TabControl",
-        **({"children": [tab_item.to_dict(include_children=True)]} if include_children else {})
+        "id": "tab_ctrl",
+        "name": "Tabs",
+        "type": "TabControl",
+        **(
+            {"children": [tab_item.to_dict(include_children=True)]}
+            if include_children
+            else {}
+        ),
     }
     tab_item.to_dict = lambda include_children=False: {
-        "id": "tab_item_1", "name": "Tab 1", "type": "TabItem",
-        **({"children": [btn.to_dict(include_children=True)]} if include_children else {})
+        "id": "tab_item_1",
+        "name": "Tab 1",
+        "type": "TabItem",
+        **(
+            {"children": [btn.to_dict(include_children=True)]}
+            if include_children
+            else {}
+        ),
     }
     btn.to_dict = lambda include_children=False: {
-        "id": "btn_ok", "name": "OK", "type": "Button",
-        **({"children": []} if include_children else {})
+        "id": "btn_ok",
+        "name": "OK",
+        "type": "Button",
+        **({"children": []} if include_children else {}),
     }
 
-    tree_response = server.call_tool("control_tree", {"session_id": "session_001", "window_id": "win_123"})
+    tree_response = server.call_tool(
+        "control_tree", {"session_id": "session_001", "window_id": "win_123"}
+    )
     assert tree_response["success"] is True
     tree = tree_response["data"]["tree"]
     # Only the root tab_ctrl is top-level
@@ -184,11 +224,11 @@ def test_snapshot_performance():
 
     # Ensure traversal is extremely fast (well under the 500ms target)
     print(f"Elapsed time for 100 nodes traversal: {elapsed:.2f}ms")
+    assert len(nodes) > 0
     assert elapsed < 100.0
 
 
 def test_find_controls_on_adapter():
-    from desktop_mcp.errors import ControlNotFoundError
     adapter = WindowsUIAutomationAdapter()
     adapter._check_platform = mock.Mock()
 
@@ -217,6 +257,7 @@ def test_find_controls_on_adapter():
 
 def test_find_control_on_adapter():
     from desktop_mcp.errors import ControlNotFoundError
+
     adapter = WindowsUIAutomationAdapter()
     adapter._check_platform = mock.Mock()
 

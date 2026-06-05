@@ -39,9 +39,7 @@ def test_report_generation(tmp_path):
         session_id = res["data"]["session_id"]
 
         # Capture desktop (will write dummy file under session evidence dir)
-        cap_res = server.call_tool(
-            "capture_desktop", {"session_id": session_id}
-        )
+        cap_res = server.call_tool("capture_desktop", {"session_id": session_id})
         assert cap_res["success"] is True
         artifact_path = cap_res["data"]["artifact"]
         assert os.path.exists(artifact_path)
@@ -53,14 +51,12 @@ def test_report_generation(tmp_path):
                 "session_id": session_id,
                 "control_id": "txt_customer",
                 "expected": "WrongName",
-            }
+            },
         )
         assert fail_res["success"] is False
 
         # Generate report
-        rep_res = server.call_tool(
-            "generate_report", {"session_id": session_id}
-        )
+        rep_res = server.call_tool("generate_report", {"session_id": session_id})
         assert rep_res["success"] is True
         report_path = rep_res["data"]["artifact"]
         assert os.path.exists(report_path)
@@ -82,15 +78,11 @@ def test_gif_recorder_in_memory_adapter(tmp_path):
         session_id = res["data"]["session_id"]
 
         # Start recording
-        start_res = server.call_tool(
-            "start_recording", {"session_id": session_id}
-        )
+        start_res = server.call_tool("start_recording", {"session_id": session_id})
         assert start_res["success"] is True
 
         # Stop recording
-        stop_res = server.call_tool(
-            "stop_recording", {"session_id": session_id}
-        )
+        stop_res = server.call_tool("stop_recording", {"session_id": session_id})
         assert stop_res["success"] is True
         gif_path = stop_res["data"]["artifact"]
         assert os.path.exists(gif_path)
@@ -114,9 +106,7 @@ def test_windows_gif_recorder_background_thread(tmp_path):
 
     mock_frame.save.side_effect = dummy_save
 
-    with mock.patch(
-        "desktop_mcp.adapters.windows.uia_adapter.ImageGrab"
-    ) as mock_grab:
+    with mock.patch("desktop_mcp.adapters.windows.uia_adapter.ImageGrab") as mock_grab:
         mock_grab.grab.return_value = mock_frame
 
         # Start recording

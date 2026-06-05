@@ -4,13 +4,13 @@ from unittest import mock
 import pytest
 
 from desktop_mcp.adapters.windows.uia_adapter import WindowsUIAutomationAdapter
-from desktop_mcp.errors import ControlNotFoundError
-from desktop_mcp.models.control import Control
 from desktop_mcp.server.mcp_server import DesktopMCPServer
 
 
 class MockGridElement:
-    def __init__(self, name: str, control_type: str = "DataGrid", children: list = None) -> None:
+    def __init__(
+        self, name: str, control_type: str = "DataGrid", children: list = None
+    ) -> None:
         self.element_info = mock.Mock()
         self.element_info.name = name
         self.element_info.control_type = control_type
@@ -25,11 +25,13 @@ class MockGridElement:
     def descendants(self) -> list:
         # Flatted list of all children recursively
         flat = []
+
         def helper(nodes):
             for n in nodes:
                 flat.append(n)
                 if hasattr(n, "_children") and not isinstance(n, mock.Mock):
                     helper(n._children)
+
         helper(self._children)
         return flat
 
@@ -85,7 +87,7 @@ def test_read_table_extracts_cells_by_headers(adapter):
     header_name = mock.Mock()
     header_name.element_info.name = "Name"
     header_name.element_info.control_type = "HeaderItem"
-    
+
     header_status = mock.Mock()
     header_status.element_info.name = "Status"
     header_status.element_info.control_type = "HeaderItem"
@@ -134,7 +136,9 @@ def test_edit_cell_sets_text_on_element(adapter):
     grid = MockGridElement("Customers", children=[headers, row])
     adapter._resolve_control = mock.Mock(return_value=grid)
 
-    adapter.interact("edit_cell", "ctrl_grid", row_index=0, column="Name", value="John Doe")
+    adapter.interact(
+        "edit_cell", "ctrl_grid", row_index=0, column="Name", value="John Doe"
+    )
     cell_name.set_edit_text.assert_called_once_with("John Doe")
 
 
@@ -144,7 +148,9 @@ def test_memory_adapter_grid_operations():
     server.call_tool("create_session", {})
 
     # 1. read_table
-    read_resp = server.call_tool("read_table", {"session_id": "session_001", "control_id": "grid_customers"})
+    read_resp = server.call_tool(
+        "read_table", {"session_id": "session_001", "control_id": "grid_customers"}
+    )
     assert read_resp["success"] is True
     assert read_resp["data"]["columns"] == ["Name", "Status"]
     assert read_resp["data"]["rows"][0]["Name"] == "Jane Doe"
@@ -158,7 +164,7 @@ def test_memory_adapter_grid_operations():
             "row_index": 0,
             "column": "Status",
             "value": "Approved",
-        }
+        },
     )
     assert edit_resp["success"] is True
 
@@ -169,7 +175,7 @@ def test_memory_adapter_grid_operations():
             "session_id": "session_001",
             "control_id": "grid_customers",
             "criteria": {"Name": "Jane Doe", "Status": "Approved"},
-        }
+        },
     )
     assert find_resp["success"] is True
     assert find_resp["data"]["row_index"] == 0

@@ -8,7 +8,9 @@ from desktop_mcp.models.window import Window
 
 
 class DesktopAdapter(Protocol):
-    def launch_application(self, path: str, arguments: list[str] | None = None) -> Application:
+    def launch_application(
+        self, path: str, arguments: list[str] | None = None
+    ) -> Application:
         ...
 
     def attach_application(self, process_id: int) -> Application:
@@ -32,7 +34,9 @@ class DesktopAdapter(Protocol):
     def get_window(self, window_id: str) -> Window:
         ...
 
-    def find_control(self, window_id: str, text: str | None = None, type: str | None = None) -> Control:
+    def find_control(
+        self, window_id: str, text: str | None = None, type: str | None = None
+    ) -> Control:
         ...
 
     def find_controls(self, window_id: str, type: str | None = None) -> list[Control]:
@@ -47,8 +51,8 @@ class DesktopAdapter(Protocol):
     def read_table(self, control_id: str) -> dict:
         ...
 
-    def capture_window(self, window_id: str) -> dict:
+    def capture_window(self, window_id: str, path: str | None = None) -> dict:
         ...
 
-    def capture_desktop(self) -> dict:
+    def capture_desktop(self, path: str | None = None) -> dict:
         ...

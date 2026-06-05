@@ -11,13 +11,21 @@ from desktop_mcp.session.session_manager import SessionManager
 
 
 class DesktopMCPServer:
-    def __init__(self, adapter: DesktopAdapter | None = None, session_manager: SessionManager | None = None) -> None:
+    def __init__(
+        self,
+        adapter: DesktopAdapter | None = None,
+        session_manager: SessionManager | None = None,
+    ) -> None:
         if adapter is None:
             import os
             import sys
+
             adapter_type = os.environ.get("DESKTOP_MCP_ADAPTER")
-            if adapter_type == "uia" or (adapter_type is None and sys.platform == "win32"):
+            if adapter_type == "uia" or (
+                adapter_type is None and sys.platform == "win32"
+            ):
                 from desktop_mcp.adapters.windows import WindowsUIAutomationAdapter
+
                 adapter = WindowsUIAutomationAdapter()
             else:
                 adapter = InMemoryDesktopAdapter()
@@ -83,12 +91,21 @@ class DesktopMCPServer:
             "generate_report": self.generate_report,
         }
 
-    def call_tool(self, name: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def call_tool(
+        self, name: str, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         import time
+
         start_time = time.time()
         session_id = payload.get("session_id") if payload else None
-        
-        def log_action(sid: str | None, status: str, duration: float, error_info: dict | None = None, result_data: dict | None = None):
+
+        def log_action(
+            sid: str | None,
+            status: str,
+            duration: float,
+            error_info: dict | None = None,
+            result_data: dict | None = None,
+        ):
             if not sid:
                 return
             try:
@@ -103,7 +120,7 @@ class DesktopMCPServer:
                     "status": status,
                     "duration": duration,
                     "error": error_info,
-                    "artifacts": artifacts
+                    "artifacts": artifacts,
                 }
                 session.logs.append(entry)
             except Exception:
@@ -144,16 +161,26 @@ class DesktopMCPServer:
         return {}
 
     def launch_application(self, payload: dict[str, Any]) -> dict[str, Any]:
-        app = self.adapter.launch_application(self._required(payload, "path"), payload.get("arguments", []))
-        self.sessions.register_application(app.application_id, payload.get("session_id"))
+        app = self.adapter.launch_application(
+            self._required(payload, "path"), payload.get("arguments", [])
+        )
+        self.sessions.register_application(
+            app.application_id, payload.get("session_id")
+        )
         for window in self.adapter.list_windows():
             if window.application_id == app.application_id:
-                self.sessions.register_window(window.window_id, payload.get("session_id"))
+                self.sessions.register_window(
+                    window.window_id, payload.get("session_id")
+                )
         return app.to_dict()
 
     def attach_application(self, payload: dict[str, Any]) -> dict[str, Any]:
-        app = self.adapter.attach_application(int(self._required(payload, "process_id")))
-        self.sessions.register_application(app.application_id, payload.get("session_id"))
+        app = self.adapter.attach_application(
+            int(self._required(payload, "process_id"))
+        )
+        self.sessions.register_application(
+            app.application_id, payload.get("session_id")
+        )
         return {"application_id": app.application_id}
 
     def close_application(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -172,7 +199,9 @@ class DesktopMCPServer:
         for window in self.adapter.list_windows():
             if title_contains in window.title.lower():
                 return window.to_dict()
-        raise InvalidRequestError(f"Window not found within timeout: {payload.get('title_contains')}")
+        raise InvalidRequestError(
+            f"Window not found within timeout: {payload.get('title_contains')}"
+        )
 
     def close_window(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.adapter.close_window(self._required(payload, "window_id"))
@@ -202,6 +231,7 @@ class DesktopMCPServer:
 
     def _flatten_controls(self, controls: list[Any]) -> list[dict[str, Any]]:
         flat = []
+
         def helper(ctrls: list[Any]) -> None:
             for c in ctrls:
                 if hasattr(c, "to_dict"):
@@ -215,19 +245,31 @@ class DesktopMCPServer:
                     flat.append(data)
                     if children:
                         helper(children)
+
         helper(controls)
         return flat
 
     def control_tree(self, payload: dict[str, Any]) -> dict[str, Any]:
         window = self.adapter.get_window(self._required(payload, "window_id"))
-        return {"window_id": window.window_id, "tree": [control.to_dict(include_children=True) for control in window.controls]}
+        return {
+            "window_id": window.window_id,
+            "tree": [
+                control.to_dict(include_children=True) for control in window.controls
+            ],
+        }
 
     def find_control(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control = self.adapter.find_control(self._required(payload, "window_id"), payload.get("text"), payload.get("type"))
+        control = self.adapter.find_control(
+            self._required(payload, "window_id"),
+            payload.get("text"),
+            payload.get("type"),
+        )
         return {"control": control.to_dict()}
 
     def find_controls(self, payload: dict[str, Any]) -> dict[str, Any]:
-        controls = self.adapter.find_controls(self._required(payload, "window_id"), payload.get("type"))
+        controls = self.adapter.find_controls(
+            self._required(payload, "window_id"), payload.get("type")
+        )
         return {"controls": [control.to_dict() for control in controls]}
 
     def get_control(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -251,22 +293,37 @@ class DesktopMCPServer:
     def drag_drop(self, payload: dict[str, Any]) -> dict[str, Any]:
         source = self._required(payload, "source_control_id")
         target = self._required(payload, "target_control_id")
-        return {"action": "drag_drop", "source_control_id": source, "target_control_id": target}
+        return {
+            "action": "drag_drop",
+            "source_control_id": source,
+            "target_control_id": target,
+        }
 
     def enter_text(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("enter_text", payload, value=self._required(payload, "value"))
+        return self._interaction(
+            "enter_text", payload, value=self._required(payload, "value")
+        )
 
     def append_text(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("append_text", payload, value=self._required(payload, "value"))
+        return self._interaction(
+            "append_text", payload, value=self._required(payload, "value")
+        )
 
     def clear_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._interaction("clear_text", payload)
 
     def read_text(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"value": self.adapter.get_control(self._required(payload, "control_id")).value or ""}
+        return {
+            "value": self.adapter.get_control(
+                self._required(payload, "control_id")
+            ).value
+            or ""
+        }
 
     def select_dropdown(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("select_dropdown", payload, value=self._required(payload, "value"))
+        return self._interaction(
+            "select_dropdown", payload, value=self._required(payload, "value")
+        )
 
     def select_tab(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._interaction("select_tab", payload)
@@ -285,7 +342,9 @@ class DesktopMCPServer:
 
     def find_row(self, payload: dict[str, Any]) -> dict[str, Any]:
         finder = getattr(self.adapter, "find_row")
-        return finder(self._required(payload, "control_id"), self._required(payload, "criteria"))
+        return finder(
+            self._required(payload, "control_id"), self._required(payload, "criteria")
+        )
 
     def select_row(self, payload: dict[str, Any]) -> dict[str, Any]:
         control_id = self._required(payload, "control_id")
@@ -297,12 +356,16 @@ class DesktopMCPServer:
         row_index = int(self._required(payload, "row_index"))
         column = self._required(payload, "column")
         value = self._required(payload, "value")
-        return self.adapter.interact("edit_cell", control_id, row_index=row_index, column=column, value=value)
+        return self.adapter.interact(
+            "edit_cell", control_id, row_index=row_index, column=column, value=value
+        )
 
     def read_cell(self, payload: dict[str, Any]) -> dict[str, Any]:
         table = self.adapter.read_table(self._required(payload, "control_id"))
         row_index = int(self._required(payload, "row_index"))
-        return {"value": table["rows"][row_index].get(self._required(payload, "column"))}
+        return {
+            "value": table["rows"][row_index].get(self._required(payload, "column"))
+        }
 
     def read_tree(self, payload: dict[str, Any]) -> dict[str, Any]:
         control = self.adapter.get_control(self._required(payload, "control_id"))
@@ -340,6 +403,7 @@ class DesktopMCPServer:
         timeout = float(payload.get("timeout", 10.0))
 
         import time
+
         start_time = time.perf_counter()
         while True:
             try:
@@ -352,18 +416,22 @@ class DesktopMCPServer:
 
     def _get_evidence_dir(self, session_id: str) -> str:
         import os
+
         evidence_base = os.environ.get("DESKTOP_MCP_EVIDENCE_DIR", "./evidence")
         return os.path.abspath(os.path.join(evidence_base, session_id))
 
     def generate_report(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._required(payload, "session_id")
         session = self.sessions.get_session(session_id)
-        
+
         import datetime
         import os
-        start_dt = datetime.datetime.fromtimestamp(session.start_time, datetime.timezone.utc)
-        start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S UTC')
-        
+
+        start_dt = datetime.datetime.fromtimestamp(
+            session.start_time, datetime.timezone.utc
+        )
+        start_str = start_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
         lines = [
             f"# Session Execution Report - {session_id}",
             "",
@@ -376,35 +444,39 @@ class DesktopMCPServer:
             "## Action Timeline",
             "",
             "| Timestamp | Tool | Status | Duration | Artifacts/Notes |",
-            "| :--- | :--- | :--- | :--- | :--- |"
+            "| :--- | :--- | :--- | :--- | :--- |",
         ]
-        
+
         for entry in session.logs:
-            ts = datetime.datetime.fromtimestamp(entry["timestamp"], datetime.timezone.utc).strftime('%H:%M:%S.%f')[:-3]
+            ts = datetime.datetime.fromtimestamp(
+                entry["timestamp"], datetime.timezone.utc
+            ).strftime("%H:%M:%S.%f")[:-3]
             tool = entry["tool"]
             status = entry["status"].upper()
             duration = f"{entry['duration']:.3f}s"
-            
+
             notes = []
             if entry["error"]:
-                notes.append(f"Error: {entry['error']['code']} - {entry['error']['message']}")
+                notes.append(
+                    f"Error: {entry['error']['code']} - {entry['error']['message']}"
+                )
             if entry["artifacts"]:
                 for art in entry["artifacts"]:
                     filename = os.path.basename(art)
                     notes.append(f"[{filename}](file://{art})")
             notes_str = "; ".join(notes) if notes else "-"
-            
+
             lines.append(f"| {ts} | `{tool}` | {status} | {duration} | {notes_str} |")
-            
+
         report_content = "\n".join(lines)
-        
+
         ev_dir = self._get_evidence_dir(session_id)
         os.makedirs(ev_dir, exist_ok=True)
         report_path = os.path.abspath(os.path.join(ev_dir, "report.md"))
-        
+
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(report_content)
-            
+
         return {"session_id": session_id, "artifact": report_path}
 
     def assert_text(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -427,19 +499,28 @@ class DesktopMCPServer:
             control = self.adapter.get_control(control_id)
             for field in ("enabled", "visible", "focused"):
                 if field in payload and getattr(control, field) != payload[field]:
-                    raise InvalidRequestError(f"Expected {field}={payload[field]!r}, got {getattr(control, field)!r}")
+                    raise InvalidRequestError(
+                        f"Expected {field}={payload[field]!r}, "
+                        f"got {getattr(control, field)!r}"
+                    )
             return {"passed": True}
         except Exception:
             self._capture_failure_evidence(control_id, session_id)
             raise
 
-    def _capture_failure_evidence(self, control_id: str, session_id: str | None = None) -> None:
+    def _capture_failure_evidence(
+        self, control_id: str, session_id: str | None = None
+    ) -> None:
         try:
             import os
+
             if session_id:
                 import time
+
                 ev_dir = self._get_evidence_dir(session_id)
-                path = os.path.join(ev_dir, f"failure_{control_id}_{int(time.time())}.png")
+                path = os.path.join(
+                    ev_dir, f"failure_{control_id}_{int(time.time())}.png"
+                )
                 self.adapter.capture_desktop(path=path)
             else:
                 self.adapter.capture_desktop()
@@ -455,6 +536,7 @@ class DesktopMCPServer:
         if session_id:
             import time
             import os
+
             ev_dir = self._get_evidence_dir(session_id)
             path = os.path.join(ev_dir, f"window_{window_id}_{int(time.time())}.png")
             return self.adapter.capture_window(window_id, path=path)
@@ -465,6 +547,7 @@ class DesktopMCPServer:
         if session_id:
             import time
             import os
+
             ev_dir = self._get_evidence_dir(session_id)
             path = os.path.join(ev_dir, f"desktop_{int(time.time())}.png")
             return self.adapter.capture_desktop(path=path)
@@ -475,9 +558,10 @@ class DesktopMCPServer:
         # Ensure session exists
         self.sessions.get_session(session_id)
         import os
+
         ev_dir = self._get_evidence_dir(session_id)
         gif_path = os.path.join(ev_dir, "recording.gif")
-        
+
         recorder = getattr(self.adapter, "start_recording", None)
         if recorder:
             return recorder(path=gif_path)
@@ -487,7 +571,7 @@ class DesktopMCPServer:
         session_id = self._required(payload, "session_id")
         # Ensure session exists
         self.sessions.get_session(session_id)
-        
+
         recorder = getattr(self.adapter, "stop_recording", None)
         if recorder:
             return recorder()
@@ -503,8 +587,12 @@ class DesktopMCPServer:
                 return {"window_id": window.window_id}
         return {"window_id": "win_browser_001"}
 
-    def _interaction(self, action: str, payload: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        return self.adapter.interact(action, self._required(payload, "control_id"), **kwargs)
+    def _interaction(
+        self, action: str, payload: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        return self.adapter.interact(
+            action, self._required(payload, "control_id"), **kwargs
+        )
 
     def _required(self, payload: dict[str, Any], key: str) -> Any:
         value = payload.get(key)

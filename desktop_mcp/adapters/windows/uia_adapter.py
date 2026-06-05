@@ -16,29 +16,37 @@ from desktop_mcp.models.application import Application
 from desktop_mcp.models.control import Control
 from desktop_mcp.models.window import Window
 
-# Try to import Windows dependencies, otherwise define them as None to allow testing/linting on macOS
+# Try to import Windows dependencies, otherwise define them as None to allow
+# testing/linting on macOS
+psutil: Any = None
+win32con: Any = None
+win32gui: Any = None
+ImageGrab: Any = None
+PyWinApplication: Any = None
+PyWinDesktop: Any = None
+
 try:
     if sys.platform == "win32":
-        import psutil
-        import win32con
-        import win32gui
-        from PIL import ImageGrab
-        from pywinauto import Application as PyWinApplication
-        from pywinauto import Desktop as PyWinDesktop
-    else:
-        psutil = None
-        win32con = None
-        win32gui = None
-        ImageGrab = None
-        PyWinApplication = None
-        PyWinDesktop = None
+        import psutil as psutil_mod
+
+        psutil = psutil_mod
+        import win32con as win32con_mod
+
+        win32con = win32con_mod
+        import win32gui as win32gui_mod
+
+        win32gui = win32gui_mod
+        from PIL import ImageGrab as ImageGrab_mod
+
+        ImageGrab = ImageGrab_mod
+        from pywinauto import Application as PyWinApplication_mod
+
+        PyWinApplication = PyWinApplication_mod
+        from pywinauto import Desktop as PyWinDesktop_mod
+
+        PyWinDesktop = PyWinDesktop_mod
 except ImportError:
-    psutil = None
-    win32con = None
-    win32gui = None
-    ImageGrab = None
-    PyWinApplication = None
-    PyWinDesktop = None
+    pass
 
 # A map of UIA control types to standard, agent-friendly Desktop MCP control types
 UIA_CONTROL_TYPE_MAP = {
@@ -88,13 +96,15 @@ UIA_CONTROL_TYPE_MAP = {
 class WindowsUIAutomationAdapter:
     """Windows UI Automation adapter using pywinauto and comtypes.
 
-    Exposes the public DesktopAdapter protocol while encapsulating Windows-specific automation APIs.
+    Exposes the public DesktopAdapter protocol while encapsulating
+    Windows-specific automation APIs.
     """
 
     def __init__(self) -> None:
         self._apps: dict[str, Any] = {}
         self._controls_cache: dict[str, Any] = {}
         import threading
+
         self._recording_thread: threading.Thread | None = None
         self._stop_recording_event = threading.Event()
         self._recording_frames: list[Any] = []
@@ -102,13 +112,18 @@ class WindowsUIAutomationAdapter:
 
     def _check_platform(self) -> None:
         if sys.platform != "win32":
-            raise DesktopMCPError("Windows UI Automation adapter is only supported on Windows")
+            raise DesktopMCPError(
+                "Windows UI Automation adapter is only supported on Windows"
+            )
         if PyWinApplication is None:
             raise DesktopMCPError(
-                "Required Windows libraries (pywinauto, pywin32, psutil, Pillow) are not installed"
+                "Required Windows libraries (pywinauto, pywin32, psutil, Pillow) "
+                "are not installed"
             )
 
-    def launch_application(self, path: str, arguments: list[str] | None = None) -> Application:
+    def launch_application(
+        self, path: str, arguments: list[str] | None = None
+    ) -> Application:
         self._check_platform()
         args_str = " ".join(arguments) if arguments else ""
         cmd_line = f'"{path}" {args_str}'.strip()
@@ -117,9 +132,13 @@ class WindowsUIAutomationAdapter:
             process_id = app.process
             application_id = f"app_{process_id}"
             self._apps[application_id] = app
-            return Application(application_id=application_id, process_id=process_id, path=path)
+            return Application(
+                application_id=application_id, process_id=process_id, path=path
+            )
         except Exception as exc:
-            raise DesktopMCPError(f"Failed to launch application {path}: {exc}") from exc
+            raise DesktopMCPError(
+                f"Failed to launch application {path}: {exc}"
+            ) from exc
 
     def attach_application(self, process_id: int) -> Application:
         self._check_platform()
@@ -129,12 +148,18 @@ class WindowsUIAutomationAdapter:
             self._apps[application_id] = app
             return Application(application_id=application_id, process_id=process_id)
         except Exception as exc:
-            raise AppNotFoundError(f"Failed to attach to process {process_id}: {exc}") from exc
+            raise AppNotFoundError(
+                f"Failed to attach to process {process_id}: {exc}"
+            ) from exc
 
     def close_application(self, application_id: str) -> None:
         self._check_platform()
         try:
-            pid = int(application_id.split("_")[1]) if "_" in application_id else int(application_id)
+            pid = (
+                int(application_id.split("_")[1])
+                if "_" in application_id
+                else int(application_id)
+            )
         except (ValueError, IndexError) as exc:
             raise AppNotFoundError(f"Invalid application ID: {application_id}") from exc
 
@@ -148,7 +173,9 @@ class WindowsUIAutomationAdapter:
         except psutil.NoSuchProcess:
             pass
         except Exception as exc:
-            raise DesktopMCPError(f"Failed to close application {application_id}: {exc}") from exc
+            raise DesktopMCPError(
+                f"Failed to close application {application_id}: {exc}"
+            ) from exc
 
     def list_windows(self) -> list[Window]:
         self._check_platform()
@@ -187,7 +214,9 @@ class WindowsUIAutomationAdapter:
         except WindowNotFoundError:
             raise
         except Exception as exc:
-            raise DesktopMCPError(f"Failed to activate window {window_id}: {exc}") from exc
+            raise DesktopMCPError(
+                f"Failed to activate window {window_id}: {exc}"
+            ) from exc
 
     def close_window(self, window_id: str) -> None:
         self._check_platform()
@@ -212,7 +241,9 @@ class WindowsUIAutomationAdapter:
         except WindowNotFoundError:
             raise
         except Exception as exc:
-            raise DesktopMCPError(f"Failed to resize window {window_id}: {exc}") from exc
+            raise DesktopMCPError(
+                f"Failed to resize window {window_id}: {exc}"
+            ) from exc
 
     def get_window(self, window_id: str) -> Window:
         self._check_platform()
@@ -291,7 +322,8 @@ class WindowsUIAutomationAdapter:
     ) -> list[Control]:
         """Recursively traverse the UIA element hierarchy.
 
-        Filters out non-essential containers, lifting their semantic children up to keep tree shallow.
+        Filters out non-essential containers, lifting their semantic
+        children up to keep tree shallow.
         """
         if current_depth > max_depth:
             return []
@@ -420,7 +452,11 @@ class WindowsUIAutomationAdapter:
                     el.click_input()
             elif action == "select_row":
                 row_index = int(kwargs.get("row_index", 0))
-                data_rows = [d for d in el.descendants() if d.element_info.control_type in ("DataItem", "Row")]
+                data_rows = [
+                    d
+                    for d in el.descendants()
+                    if d.element_info.control_type in ("DataItem", "Row")
+                ]
                 if row_index < len(data_rows):
                     row_el = data_rows[row_index]
                     if hasattr(row_el, "select"):
@@ -428,24 +464,50 @@ class WindowsUIAutomationAdapter:
                     else:
                         row_el.click_input()
                 else:
-                    raise ControlNotFoundError(f"Row index {row_index} out of range for grid {control_id}")
+                    raise ControlNotFoundError(
+                        f"Row index {row_index} out of range for grid {control_id}"
+                    )
             elif action == "edit_cell":
                 row_index = int(kwargs.get("row_index", 0))
                 column = str(kwargs.get("column", ""))
                 value = str(kwargs.get("value", ""))
-                
-                data_rows = [d for d in el.descendants() if d.element_info.control_type in ("DataItem", "Row")]
+
+                data_rows = [
+                    d
+                    for d in el.descendants()
+                    if d.element_info.control_type in ("DataItem", "Row")
+                ]
                 if row_index < len(data_rows):
                     row_el = data_rows[row_index]
-                    cells = [c for c in row_el.descendants() if c.element_info.control_type in ("Text", "Edit", "CheckBox", "DataItem")]
-                    
-                    headers = [d for d in el.descendants() if d.element_info.control_type == "Header"]
+                    cells = [
+                        c
+                        for c in row_el.descendants()
+                        if c.element_info.control_type
+                        in ("Text", "Edit", "CheckBox", "DataItem")
+                    ]
+
+                    headers = [
+                        d
+                        for d in el.descendants()
+                        if d.element_info.control_type == "Header"
+                    ]
                     header_items = []
                     for h in headers:
-                        header_items.extend([d.element_info.name for d in h.descendants() if d.element_info.name])
+                        header_items.extend(
+                            [
+                                d.element_info.name
+                                for d in h.descendants()
+                                if d.element_info.name
+                            ]
+                        )
                     if not header_items:
-                        header_items = [d.element_info.name for d in el.descendants() if d.element_info.control_type == "HeaderItem" and d.element_info.name]
-                        
+                        header_items = [
+                            d.element_info.name
+                            for d in el.descendants()
+                            if d.element_info.control_type == "HeaderItem"
+                            and d.element_info.name
+                        ]
+
                     cell_el = None
                     if column in header_items:
                         col_index = header_items.index(column)
@@ -458,7 +520,7 @@ class WindowsUIAutomationAdapter:
                                 cell_el = cells[col_index]
                         except ValueError:
                             pass
-                            
+
                     if cell_el:
                         if hasattr(cell_el, "set_edit_text"):
                             cell_el.set_edit_text(value)
@@ -466,9 +528,13 @@ class WindowsUIAutomationAdapter:
                             cell_el.click_input()
                             cell_el.type_keys(value, with_spaces=True, with_tabs=True)
                     else:
-                        raise ControlNotFoundError(f"Cell in column {column} not found in row {row_index}")
+                        raise ControlNotFoundError(
+                            f"Cell in column {column} not found in row {row_index}"
+                        )
                 else:
-                    raise ControlNotFoundError(f"Row index {row_index} out of range for grid {control_id}")
+                    raise ControlNotFoundError(
+                        f"Row index {row_index} out of range for grid {control_id}"
+                    )
             else:
                 raise UnsupportedControlError(f"Unsupported action {action}")
 
@@ -486,29 +552,41 @@ class WindowsUIAutomationAdapter:
         rows = []
 
         try:
-            headers = [d for d in el.descendants() if d.element_info.control_type == "Header"]
+            headers = [
+                d for d in el.descendants() if d.element_info.control_type == "Header"
+            ]
             header_items = []
             for h in headers:
                 header_items.extend(
-                    [d.element_info.name for d in h.descendants() if d.element_info.name]
+                    [
+                        d.element_info.name
+                        for d in h.descendants()
+                        if d.element_info.name
+                    ]
                 )
 
             if not header_items:
                 header_items = [
                     d.element_info.name
                     for d in el.descendants()
-                    if d.element_info.control_type == "HeaderItem" and d.element_info.name
+                    if d.element_info.control_type == "HeaderItem"
+                    and d.element_info.name
                 ]
 
             columns = header_items
 
-            data_rows = [d for d in el.descendants() if d.element_info.control_type in ("DataItem", "Row")]
+            data_rows = [
+                d
+                for d in el.descendants()
+                if d.element_info.control_type in ("DataItem", "Row")
+            ]
             for row_el in data_rows:
                 row_cells = {}
                 cells = [
                     c
                     for c in row_el.descendants()
-                    if c.element_info.control_type in ("Text", "Edit", "CheckBox", "DataItem")
+                    if c.element_info.control_type
+                    in ("Text", "Edit", "CheckBox", "DataItem")
                 ]
 
                 if columns:
@@ -588,13 +666,14 @@ class WindowsUIAutomationAdapter:
         self._check_platform()
         if self._recording_thread and self._recording_thread.is_alive():
             return {"recording": True, "message": "Recording already in progress"}
-        
+
         self._recording_path = path
         self._recording_frames = []
         self._stop_recording_event.clear()
-        
+
         def record_loop():
             import time
+
             while not self._stop_recording_event.is_set():
                 try:
                     if ImageGrab is not None:
@@ -604,8 +683,9 @@ class WindowsUIAutomationAdapter:
                 except Exception:
                     pass
                 time.sleep(0.2)
-                
+
         import threading
+
         self._recording_thread = threading.Thread(target=record_loop, daemon=True)
         self._recording_thread.start()
         return {"recording": True}
@@ -614,10 +694,10 @@ class WindowsUIAutomationAdapter:
         self._check_platform()
         if not self._recording_thread or not self._recording_thread.is_alive():
             return {"recording": False, "message": "No recording in progress"}
-            
+
         self._stop_recording_event.set()
         self._recording_thread.join(timeout=2.0)
-        
+
         path = self._recording_path
         if path is None:
             os.makedirs("recordings", exist_ok=True)
@@ -627,7 +707,7 @@ class WindowsUIAutomationAdapter:
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
             path = os.path.abspath(path)
-            
+
         if self._recording_frames:
             try:
                 first_frame = self._recording_frames[0]
@@ -636,24 +716,29 @@ class WindowsUIAutomationAdapter:
                     save_all=True,
                     append_images=self._recording_frames[1:],
                     duration=200,
-                    loop=0
+                    loop=0,
                 )
             except Exception as exc:
                 raise DesktopMCPError(f"Failed to compile animated GIF: {exc}") from exc
         else:
             try:
                 from PIL import Image
+
                 dummy = Image.new("RGB", (800, 600), color="black")
                 dummy.save(path)
             except Exception as exc:
-                raise DesktopMCPError(f"Failed to create empty recording: {exc}") from exc
-                
+                raise DesktopMCPError(
+                    f"Failed to create empty recording: {exc}"
+                ) from exc
+
         self._recording_frames = []
         return {"recording": False, "artifact": path}
 
     def _resolve_window(self, window_id: str) -> Any:
         try:
-            handle = int(window_id.split("_")[1]) if "_" in window_id else int(window_id)
+            handle = (
+                int(window_id.split("_")[1]) if "_" in window_id else int(window_id)
+            )
         except (ValueError, IndexError) as exc:
             raise WindowNotFoundError(f"Invalid window ID: {window_id}") from exc
 

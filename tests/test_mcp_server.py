@@ -31,7 +31,9 @@ def test_stateful_tools_require_a_session():
 def test_window_snapshot_returns_controls():
     server, session_id = new_server()
 
-    response = server.call_tool("window_snapshot", {"session_id": session_id, "window_id": "win_demo"})
+    response = server.call_tool(
+        "window_snapshot", {"session_id": session_id, "window_id": "win_demo"}
+    )
 
     assert response["success"] is True
     assert response["data"]["window_id"] == "win_demo"
@@ -41,11 +43,19 @@ def test_window_snapshot_returns_controls():
 
 def test_find_control_and_text_round_trip():
     server, session_id = new_server()
-    found = server.call_tool("find_control", {"session_id": session_id, "window_id": "win_demo", "text": "Customer"})
+    found = server.call_tool(
+        "find_control",
+        {"session_id": session_id, "window_id": "win_demo", "text": "Customer"},
+    )
     control_id = found["data"]["control"]["id"]
 
-    enter = server.call_tool("enter_text", {"session_id": session_id, "control_id": control_id, "value": "John Doe"})
-    read = server.call_tool("read_text", {"session_id": session_id, "control_id": control_id})
+    enter = server.call_tool(
+        "enter_text",
+        {"session_id": session_id, "control_id": control_id, "value": "John Doe"},
+    )
+    read = server.call_tool(
+        "read_text", {"session_id": session_id, "control_id": control_id}
+    )
 
     assert enter["success"] is True
     assert read["data"]["value"] == "John Doe"
@@ -73,7 +83,11 @@ def test_assert_text_failure_returns_invalid_request():
 
     response = server.call_tool(
         "assert_text",
-        {"session_id": session_id, "control_id": "txt_customer", "expected": "Approved"},
+        {
+            "session_id": session_id,
+            "control_id": "txt_customer",
+            "expected": "Approved",
+        },
     )
 
     assert response["success"] is False

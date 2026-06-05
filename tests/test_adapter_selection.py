@@ -1,5 +1,4 @@
 import os
-import sys
 from unittest import mock
 
 from desktop_mcp.adapters.memory import InMemoryDesktopAdapter
@@ -8,7 +7,8 @@ from desktop_mcp.server.mcp_server import DesktopMCPServer
 
 
 def test_default_adapter_on_non_windows():
-    # If platform is not win32, and no env var is set, it should default to memory adapter
+    # If platform is not win32, and no env var is set, it should
+    # default to memory adapter
     with mock.patch("sys.platform", "darwin"):
         with mock.patch.dict(os.environ, {}, clear=True):
             server = DesktopMCPServer()

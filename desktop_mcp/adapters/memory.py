@@ -3,7 +3,12 @@ from __future__ import annotations
 from itertools import count
 from typing import Any
 
-from desktop_mcp.errors import AppNotFoundError, ControlDisabledError, ControlNotFoundError, WindowNotFoundError
+from desktop_mcp.errors import (
+    AppNotFoundError,
+    ControlDisabledError,
+    ControlNotFoundError,
+    WindowNotFoundError,
+)
 from desktop_mcp.models.application import Application
 from desktop_mcp.models.control import Control
 from desktop_mcp.models.window import Window
@@ -25,9 +30,27 @@ class InMemoryDesktopAdapter:
     def seed(self) -> None:
         app = Application(application_id="app_demo", process_id=1000, path="demo.exe")
         controls = [
-            Control(id="btn_save", automation_id="btnSave", name="Save", type="Button", patterns=["InvokePattern"]),
-            Control(id="txt_customer", automation_id="txtCustomer", name="Customer", type="Edit", value=""),
-            Control(id="ddl_state", automation_id="ddlState", name="State", type="ComboBox", value=""),
+            Control(
+                id="btn_save",
+                automation_id="btnSave",
+                name="Save",
+                type="Button",
+                patterns=["InvokePattern"],
+            ),
+            Control(
+                id="txt_customer",
+                automation_id="txtCustomer",
+                name="Customer",
+                type="Edit",
+                value="",
+            ),
+            Control(
+                id="ddl_state",
+                automation_id="ddlState",
+                name="State",
+                type="ComboBox",
+                value="",
+            ),
             Control(
                 id="grid_customers",
                 automation_id="gridCustomers",
@@ -42,17 +65,34 @@ class InMemoryDesktopAdapter:
                 },
             ),
         ]
-        window = Window(window_id="win_demo", application_id=app.application_id, title="Customer Management", active=True, controls=controls)
+        window = Window(
+            window_id="win_demo",
+            application_id=app.application_id,
+            title="Customer Management",
+            active=True,
+            controls=controls,
+        )
         self._applications[app.application_id] = app
         self._windows[window.window_id] = window
         for control in controls:
             self._controls[control.id] = control
 
-    def launch_application(self, path: str, arguments: list[str] | None = None) -> Application:
+    def launch_application(
+        self, path: str, arguments: list[str] | None = None
+    ) -> Application:
         application_id = f"app_{next(self._app_counter):03d}"
         window_id = f"win_{next(self._window_counter):03d}"
-        app = Application(application_id=application_id, process_id=2000 + len(self._applications), path=path)
-        window = Window(window_id=window_id, application_id=application_id, title=path.rsplit("\\", 1)[-1] or path, active=True)
+        app = Application(
+            application_id=application_id,
+            process_id=2000 + len(self._applications),
+            path=path,
+        )
+        window = Window(
+            window_id=window_id,
+            application_id=application_id,
+            title=path.rsplit("\\", 1)[-1] or path,
+            active=True,
+        )
         self._applications[application_id] = app
         self._windows[window_id] = window
         self.activate_window(window_id)
@@ -71,7 +111,11 @@ class InMemoryDesktopAdapter:
         if application_id not in self._applications:
             raise AppNotFoundError(f"Application not found: {application_id}")
         del self._applications[application_id]
-        stale_windows = [window_id for window_id, window in self._windows.items() if window.application_id == application_id]
+        stale_windows = [
+            window_id
+            for window_id, window in self._windows.items()
+            if window.application_id == application_id
+        ]
         for window_id in stale_windows:
             self.close_window(window_id)
 
@@ -103,10 +147,14 @@ class InMemoryDesktopAdapter:
         except KeyError as exc:
             raise WindowNotFoundError(f"Window not found: {window_id}") from exc
 
-    def find_control(self, window_id: str, text: str | None = None, type: str | None = None) -> Control:
+    def find_control(
+        self, window_id: str, text: str | None = None, type: str | None = None
+    ) -> Control:
         matches = self.find_controls(window_id, type=type)
         if text is not None:
-            matches = [control for control in matches if text.lower() in control.name.lower()]
+            matches = [
+                control for control in matches if text.lower() in control.name.lower()
+            ]
         if not matches:
             raise ControlNotFoundError("Control could not be located")
         return matches[0]
@@ -115,7 +163,11 @@ class InMemoryDesktopAdapter:
         window = self.get_window(window_id)
         if type is None:
             return list(window.controls)
-        return [control for control in window.controls if control.type.lower() == type.lower()]
+        return [
+            control
+            for control in window.controls
+            if control.type.lower() == type.lower()
+        ]
 
     def get_control(self, control_id: str) -> Control:
         try:
@@ -129,7 +181,9 @@ class InMemoryDesktopAdapter:
             raise ControlDisabledError(f"Control is disabled: {control_id}")
         if action in {"enter_text", "append_text"}:
             value = str(kwargs.get("value", ""))
-            control.value = value if action == "enter_text" else f"{control.value or ''}{value}"
+            control.value = (
+                value if action == "enter_text" else f"{control.value or ''}{value}"
+            )
         elif action == "clear_text":
             control.value = ""
         elif action in {"select_dropdown", "select_tab", "select_radio", "check"}:
@@ -167,6 +221,7 @@ class InMemoryDesktopAdapter:
 
     def capture_window(self, window_id: str, path: str | None = None) -> dict:
         import os
+
         window = self.get_window(window_id)
         artifact_path = path or f"memory://screenshots/{window.window_id}.png"
         if path:
@@ -179,6 +234,7 @@ class InMemoryDesktopAdapter:
 
     def capture_desktop(self, path: str | None = None) -> dict:
         import os
+
         artifact_path = path or "memory://screenshots/desktop.png"
         if path:
             dir_name = os.path.dirname(path)
@@ -195,6 +251,7 @@ class InMemoryDesktopAdapter:
 
     def stop_recording(self) -> dict:
         import os
+
         self._recording = False
         path = self._recording_path
         if path is None:
@@ -206,6 +263,7 @@ class InMemoryDesktopAdapter:
             path = os.path.abspath(path)
             try:
                 from PIL import Image
+
                 dummy = Image.new("RGB", (100, 100), color="blue")
                 dummy.save(path)
             except Exception:

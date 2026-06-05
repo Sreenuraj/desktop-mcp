@@ -32,7 +32,9 @@ class SessionManager:
             raise SessionNotFoundError("No active Desktop MCP session")
         return self._sessions[resolved_id]
 
-    def register_application(self, application_id: str, session_id: str | None = None) -> None:
+    def register_application(
+        self, application_id: str, session_id: str | None = None
+    ) -> None:
         self.get_session(session_id).applications.add(application_id)
 
     def register_window(self, window_id: str, session_id: str | None = None) -> None:
