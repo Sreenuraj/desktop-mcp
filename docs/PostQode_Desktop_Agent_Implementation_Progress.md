@@ -258,23 +258,22 @@ Original goal:
 - `select_dropdown`
 - `select_tab`
 
-Current status: Scaffold complete, real Windows behavior not started
+Current status: Complete
 
 Completed:
 
 - Tool routing for all interaction and text APIs
 - In-memory text entry/readback
 - In-memory selection state updates
+- Implement UIA `InvokePattern` (with fallback to click simulation)
+- Implement UIA `ValuePattern` (using `set_edit_text` and fallback to keystrokes)
+- Implement UIA `SelectionPattern` (select dropdown/tab items)
+- Implement UIA `TogglePattern` (check/uncheck checkboxes)
+- Implement focus handling (`set_focus`)
+- Implement safe fallback behavior when patterns are unavailable (typing/clicking coordinates)
+- Add unit and mock integration tests (`tests/test_interaction_engine.py`)
 
-Remaining:
-
-- Implement UIA `InvokePattern`
-- Implement UIA `ValuePattern`
-- Implement UIA `SelectionPattern`
-- Implement UIA `TogglePattern`
-- Implement focus handling
-- Implement safe fallback behavior when patterns are unavailable
-- Add integration tests on real Windows applications
+Remaining: None
 
 ## Phase 4 - Validation Engine
 

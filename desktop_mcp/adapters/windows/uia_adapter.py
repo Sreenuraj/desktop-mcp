@@ -417,6 +417,8 @@ class WindowsUIAutomationAdapter:
                 raise UnsupportedControlError(f"Unsupported action {action}")
 
             return {"action": action, "control_id": control_id}
+        except DesktopMCPError:
+            raise
         except Exception as exc:
             raise DesktopMCPError(f"Interaction {action} failed: {exc}") from exc
 
