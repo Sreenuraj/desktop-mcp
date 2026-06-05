@@ -19,6 +19,7 @@ class InMemoryDesktopAdapter:
         self._windows: dict[str, Window] = {}
         self._controls: dict[str, Control] = {}
         self._recording = False
+        self._recording_path: str | None = None
         self.seed()
 
     def seed(self) -> None:
@@ -164,17 +165,50 @@ class InMemoryDesktopAdapter:
                 return {"row_index": index, "row": row}
         raise ControlNotFoundError("Table row could not be located")
 
-    def capture_window(self, window_id: str) -> dict:
+    def capture_window(self, window_id: str, path: str | None = None) -> dict:
+        import os
         window = self.get_window(window_id)
-        return {"window_id": window.window_id, "artifact": f"memory://screenshots/{window.window_id}.png"}
+        artifact_path = path or f"memory://screenshots/{window.window_id}.png"
+        if path:
+            dir_name = os.path.dirname(path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            with open(path, "w") as f:
+                f.write("dummy window screenshot")
+        return {"window_id": window.window_id, "artifact": artifact_path}
 
-    def capture_desktop(self) -> dict:
-        return {"artifact": "memory://screenshots/desktop.png"}
+    def capture_desktop(self, path: str | None = None) -> dict:
+        import os
+        artifact_path = path or "memory://screenshots/desktop.png"
+        if path:
+            dir_name = os.path.dirname(path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            with open(path, "w") as f:
+                f.write("dummy desktop screenshot")
+        return {"artifact": artifact_path}
 
-    def start_recording(self) -> dict:
+    def start_recording(self, path: str | None = None) -> dict:
         self._recording = True
+        self._recording_path = path
         return {"recording": True}
 
     def stop_recording(self) -> dict:
+        import os
         self._recording = False
-        return {"recording": False, "artifact": "memory://recordings/session.mp4"}
+        path = self._recording_path
+        if path is None:
+            path = "memory://recordings/session.gif"
+        else:
+            dir_name = os.path.dirname(path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            path = os.path.abspath(path)
+            try:
+                from PIL import Image
+                dummy = Image.new("RGB", (100, 100), color="blue")
+                dummy.save(path)
+            except Exception:
+                with open(path, "w") as f:
+                    f.write("dummy gif content")
+        return {"recording": False, "artifact": path}

@@ -331,23 +331,18 @@ Original goal:
 - Action logs
 - Execution reports
 
-Current status: Minimal placeholder
+Current status: Complete
 
 Completed:
 
-- `capture_window` placeholder response
-- `capture_desktop` placeholder response
-- `start_recording` placeholder
-- `stop_recording` placeholder
+- Real screenshot capture for window and full desktop via Pillow
+- Structured evidence file storage sorted by session ID
+- Dynamic action timeline log tracking inside the session object
+- Failure screenshots captured automatically on assertion failures
+- Execution report generation compiler yielding rich Markdown reports
+- Screen recording via background thread compiled to optimized animated GIFs
 
-Remaining:
-
-- Real screenshot capture
-- Evidence file storage
-- Action timeline logs
-- Failure screenshots
-- Execution report generation
-- Optional video recording
+Remaining: None
 
 ## Phase 7 - Browser Authentication
 

@@ -94,6 +94,11 @@ class WindowsUIAutomationAdapter:
     def __init__(self) -> None:
         self._apps: dict[str, Any] = {}
         self._controls_cache: dict[str, Any] = {}
+        import threading
+        self._recording_thread: threading.Thread | None = None
+        self._stop_recording_event = threading.Event()
+        self._recording_frames: list[Any] = []
+        self._recording_path: str | None = None
 
     def _check_platform(self) -> None:
         if sys.platform != "win32":
@@ -540,7 +545,7 @@ class WindowsUIAutomationAdapter:
                 return {"row_index": index, "row": row}
         raise ControlNotFoundError("Table row could not be located")
 
-    def capture_window(self, window_id: str) -> dict:
+    def capture_window(self, window_id: str, path: str | None = None) -> dict:
         self._check_platform()
         try:
             win = self._resolve_window(window_id)
@@ -548,24 +553,103 @@ class WindowsUIAutomationAdapter:
             bbox = (rect.left, rect.top, rect.right, rect.bottom)
             screenshot = ImageGrab.grab(bbox=bbox)
 
-            os.makedirs("screenshots", exist_ok=True)
-            path = os.path.abspath(f"screenshots/{window_id}.png")
-            screenshot.save(path)
+            if path is None:
+                os.makedirs("screenshots", exist_ok=True)
+                path = os.path.abspath(f"screenshots/{window_id}.png")
+            else:
+                dir_name = os.path.dirname(path)
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True)
+                path = os.path.abspath(path)
 
+            screenshot.save(path)
             return {"window_id": window_id, "artifact": path}
         except Exception as exc:
             raise DesktopMCPError(f"Failed to capture window: {exc}") from exc
 
-    def capture_desktop(self) -> dict:
+    def capture_desktop(self, path: str | None = None) -> dict:
         self._check_platform()
         try:
             screenshot = ImageGrab.grab()
-            os.makedirs("screenshots", exist_ok=True)
-            path = os.path.abspath("screenshots/desktop.png")
+            if path is None:
+                os.makedirs("screenshots", exist_ok=True)
+                path = os.path.abspath("screenshots/desktop.png")
+            else:
+                dir_name = os.path.dirname(path)
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True)
+                path = os.path.abspath(path)
             screenshot.save(path)
             return {"artifact": path}
         except Exception as exc:
             raise DesktopMCPError(f"Failed to capture desktop: {exc}") from exc
+
+    def start_recording(self, path: str | None = None) -> dict:
+        self._check_platform()
+        if self._recording_thread and self._recording_thread.is_alive():
+            return {"recording": True, "message": "Recording already in progress"}
+        
+        self._recording_path = path
+        self._recording_frames = []
+        self._stop_recording_event.clear()
+        
+        def record_loop():
+            import time
+            while not self._stop_recording_event.is_set():
+                try:
+                    if ImageGrab is not None:
+                        frame = ImageGrab.grab()
+                        frame = frame.resize((800, 600))
+                        self._recording_frames.append(frame)
+                except Exception:
+                    pass
+                time.sleep(0.2)
+                
+        import threading
+        self._recording_thread = threading.Thread(target=record_loop, daemon=True)
+        self._recording_thread.start()
+        return {"recording": True}
+
+    def stop_recording(self) -> dict:
+        self._check_platform()
+        if not self._recording_thread or not self._recording_thread.is_alive():
+            return {"recording": False, "message": "No recording in progress"}
+            
+        self._stop_recording_event.set()
+        self._recording_thread.join(timeout=2.0)
+        
+        path = self._recording_path
+        if path is None:
+            os.makedirs("recordings", exist_ok=True)
+            path = os.path.abspath("recordings/recording.gif")
+        else:
+            dir_name = os.path.dirname(path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            path = os.path.abspath(path)
+            
+        if self._recording_frames:
+            try:
+                first_frame = self._recording_frames[0]
+                first_frame.save(
+                    path,
+                    save_all=True,
+                    append_images=self._recording_frames[1:],
+                    duration=200,
+                    loop=0
+                )
+            except Exception as exc:
+                raise DesktopMCPError(f"Failed to compile animated GIF: {exc}") from exc
+        else:
+            try:
+                from PIL import Image
+                dummy = Image.new("RGB", (800, 600), color="black")
+                dummy.save(path)
+            except Exception as exc:
+                raise DesktopMCPError(f"Failed to create empty recording: {exc}") from exc
+                
+        self._recording_frames = []
+        return {"recording": False, "artifact": path}
 
     def _resolve_window(self, window_id: str) -> Any:
         try:
