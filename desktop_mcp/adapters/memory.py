@@ -139,6 +139,15 @@ class InMemoryDesktopAdapter:
             for item in self._controls.values():
                 item.focused = False
             control.focused = True
+        elif action == "select_row":
+            row_index = int(kwargs.get("row_index", 0))
+            control.value = f"row_{row_index}"
+        elif action == "edit_cell":
+            row_index = int(kwargs.get("row_index", 0))
+            column = str(kwargs.get("column", ""))
+            value = str(kwargs.get("value", ""))
+            if control.metadata and "rows" in control.metadata:
+                control.metadata["rows"][row_index][column] = value
         return {"action": action, "control_id": control_id}
 
     def read_table(self, control_id: str) -> dict:

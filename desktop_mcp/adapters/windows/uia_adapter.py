@@ -413,6 +413,57 @@ class WindowsUIAutomationAdapter:
                     el.uncheck()
                 else:
                     el.click_input()
+            elif action == "select_row":
+                row_index = int(kwargs.get("row_index", 0))
+                data_rows = [d for d in el.descendants() if d.element_info.control_type in ("DataItem", "Row")]
+                if row_index < len(data_rows):
+                    row_el = data_rows[row_index]
+                    if hasattr(row_el, "select"):
+                        row_el.select()
+                    else:
+                        row_el.click_input()
+                else:
+                    raise ControlNotFoundError(f"Row index {row_index} out of range for grid {control_id}")
+            elif action == "edit_cell":
+                row_index = int(kwargs.get("row_index", 0))
+                column = str(kwargs.get("column", ""))
+                value = str(kwargs.get("value", ""))
+                
+                data_rows = [d for d in el.descendants() if d.element_info.control_type in ("DataItem", "Row")]
+                if row_index < len(data_rows):
+                    row_el = data_rows[row_index]
+                    cells = [c for c in row_el.descendants() if c.element_info.control_type in ("Text", "Edit", "CheckBox", "DataItem")]
+                    
+                    headers = [d for d in el.descendants() if d.element_info.control_type == "Header"]
+                    header_items = []
+                    for h in headers:
+                        header_items.extend([d.element_info.name for d in h.descendants() if d.element_info.name])
+                    if not header_items:
+                        header_items = [d.element_info.name for d in el.descendants() if d.element_info.control_type == "HeaderItem" and d.element_info.name]
+                        
+                    cell_el = None
+                    if column in header_items:
+                        col_index = header_items.index(column)
+                        if col_index < len(cells):
+                            cell_el = cells[col_index]
+                    else:
+                        try:
+                            col_index = int(column)
+                            if col_index < len(cells):
+                                cell_el = cells[col_index]
+                        except ValueError:
+                            pass
+                            
+                    if cell_el:
+                        if hasattr(cell_el, "set_edit_text"):
+                            cell_el.set_edit_text(value)
+                        else:
+                            cell_el.click_input()
+                            cell_el.type_keys(value, with_spaces=True, with_tabs=True)
+                    else:
+                        raise ControlNotFoundError(f"Cell in column {column} not found in row {row_index}")
+                else:
+                    raise ControlNotFoundError(f"Row index {row_index} out of range for grid {control_id}")
             else:
                 raise UnsupportedControlError(f"Unsupported action {action}")
 

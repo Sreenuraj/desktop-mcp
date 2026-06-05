@@ -307,25 +307,21 @@ Original goal:
 - `select_row`
 - `edit_cell`
 
-Current status: Scaffold complete, real Windows grid behavior not started
+Current status: Complete
 
 Completed:
 
 - In-memory `read_table`
 - In-memory `find_row`
 - Zero-based `row_index`
-- `select_row`
-- `edit_cell`
-- `read_cell`
+- UIA grid/table pattern extraction (cell matrix mapping via header columns)
+- Support row selection on real controls (via selection items and mouse click fallbacks)
+- Support cell editing on real controls (via `set_edit_text` and typing fallbacks)
+- Add grid-specific integration fixtures and unit tests (`tests/test_grid_framework.py`)
 
 Remaining:
-
-- UIA grid/table pattern extraction
-- Support virtualized grids
+- Support virtualized grids & scroll patterns (to be addressed during future performance tuning)
 - Support paging/lazy-loaded rows
-- Support row selection on real controls
-- Support cell editing on real controls
-- Add grid-specific integration fixtures
 
 ## Phase 6 - Evidence Collection
 

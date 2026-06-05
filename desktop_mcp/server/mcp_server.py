@@ -250,13 +250,16 @@ class DesktopMCPServer:
         return finder(self._required(payload, "control_id"), self._required(payload, "criteria"))
 
     def select_row(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"control_id": self._required(payload, "control_id"), "row_index": int(self._required(payload, "row_index"))}
+        control_id = self._required(payload, "control_id")
+        row_index = int(self._required(payload, "row_index"))
+        return self.adapter.interact("select_row", control_id, row_index=row_index)
 
     def edit_cell(self, payload: dict[str, Any]) -> dict[str, Any]:
-        table = self.adapter.read_table(self._required(payload, "control_id"))
+        control_id = self._required(payload, "control_id")
         row_index = int(self._required(payload, "row_index"))
-        table["rows"][row_index][self._required(payload, "column")] = self._required(payload, "value")
-        return {"row_index": row_index}
+        column = self._required(payload, "column")
+        value = self._required(payload, "value")
+        return self.adapter.interact("edit_cell", control_id, row_index=row_index, column=column, value=value)
 
     def read_cell(self, payload: dict[str, Any]) -> dict[str, Any]:
         table = self.adapter.read_table(self._required(payload, "control_id"))

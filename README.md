@@ -1,95 +1,84 @@
 # PostQode Desktop MCP
 
-PostQode Desktop MCP is a Desktop Model Context Protocol server for AI-driven automation of Windows desktop applications. It exposes desktop automation as structured MCP tools so an agent can launch applications, inspect windows and controls, interact with UI elements, validate state, and collect evidence without using raw screen coordinates.
+PostQode Desktop MCP is a Model Context Protocol (MCP) server designed for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, perform mouse clicks, read grids, and capture screenshots without relying on fragile coordinate-based scripts.
 
-The current implementation includes the MCP contract, stdio entrypoint, session management, tool routing, typed models, an in-memory adapter for development/tests, and a placeholder Windows UI Automation adapter. The Windows adapter is intentionally isolated so `pywinauto`, `pywin32`, and UI Automation work can be added without changing the agent-facing contract.
+---
 
-## Current Status
+## Capabilities
 
-- Status: MVP Foundation (Phase 0 and Phase 1 Complete)
-- Runtime: Python 3.12+
-- MCP transport: stdio JSON-RPC
-- Local adapter: in-memory demo adapter
-- Windows adapter: concrete implementation using `pywinauto`, `psutil`, and UI Automation
-- Primary docs: `docs/PostQode_Desktop_MCP_API_Specification_v1.md`
+- **Session Management**: Isolated automation sessions per agent workflow.
+- **Application Control**: Launch, attach to, or close applications.
+- **Window Management**: Window list, focus window, maximize, minimize, close, or wait for window creation.
+- **Hierarchical Snapshots**: Recursive retrieval of UI automation trees with smart filtering to remove layout-only elements (e.g. anonymous panes).
+- **Element Interaction**: Pattern-based inputs (clicks, keypresses, checking checkboxes, dropdown/tab selection) with automated coordinate/typing fallbacks.
+- **Grid Framework**: Read, edit, search, and select row data from enterprise `DataGrid` and `Table` elements.
+- **Validation**: High-reliability retries on element waits, state assertions, and automatic screenshot captures on failure.
+
+---
 
 ## Prerequisites
 
-For local development:
+- **Python**: version 3.12 or newer.
+- **Operating System**: Windows 10/11 (for UIA adapter).
+  - *Note*: An in-memory adapter is included for local development and testing on macOS/Linux.
+- **System Permissions**: Accessibility/UI Automation access enabled for the target applications.
 
-- Python 3.12 or newer
-- Git
-- `pytest` for running tests
-
-For Windows desktop automation work:
-
-- Windows 10 or Windows 11
-- Python 3.12+
-- Desktop apps running in the same user session as the MCP server
-- Accessibility/UI Automation enabled on the target application
-- Optional Windows dependencies from the `windows` extra:
-  - `pywinauto`
-  - `pywin32`
-  - `comtypes`
-  - `psutil`
-  - `Pillow`
-  - `mss`
+---
 
 ## Installation
 
-Clone or open this repository, then create a virtual environment:
+Create a virtual environment and install the package:
 
 ```bash
-cd /Users/sreenuraj/desktop-mcp
+# Create and activate environment
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install in editable mode with development dependencies
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-For Windows adapter development, install the Windows extras on a Windows machine:
+For Windows desktop automation, install the Windows extras:
 
 ```bash
 python -m pip install -e ".[dev,windows]"
 ```
 
-## Run Tests
+---
 
-```bash
-python -m pytest
-```
+## Running the Server
 
-Expected result:
-
-```text
-14 passed
-```
-
-## Run the MCP Server
-
-Run the stdio server directly:
+Run the stdio server directly from the command line:
 
 ```bash
 python -m desktop_mcp.server.stdio
 ```
 
-If the package is installed in editable mode, you can also run:
+If the package is installed in editable mode, you can also use:
 
 ```bash
 desktop-mcp
 ```
 
-The server reads JSON-RPC requests from stdin and writes JSON-RPC responses to stdout. Agents should configure it as a stdio MCP server.
+The server reads JSON-RPC requests from stdin and writes JSON-RPC responses to stdout.
 
-## Agent MCP Configuration
+---
 
-Use this command when configuring an AI agent or MCP client:
+## Configuring the Adapter
 
-```bash
-python -m desktop_mcp.server.stdio
-```
+The Desktop MCP server dynamically selects the adapter to use:
+- **Default (Windows)**: Uses `WindowsUIAutomationAdapter` automatically when run on Windows (`win32`).
+- **Fallback**: On non-Windows platforms (macOS/Linux), it automatically falls back to `InMemoryDesktopAdapter`.
+- **Manual Override**: You can explicitly select the adapter by setting the `DESKTOP_MCP_ADAPTER` environment variable to either `"uia"` or `"memory"`.
 
-Example `settings.json` entry:
+---
+
+## Agent Configuration Examples
+
+### Claude Desktop / Cursor Settings
+
+Add this configuration to your client settings (`settings.json` or `claude_desktop_config.json`):
 
 ```json
 {
@@ -97,41 +86,16 @@ Example `settings.json` entry:
     "postqode-desktop": {
       "command": "python",
       "args": ["-m", "desktop_mcp.server.stdio"],
-      "cwd": "/Users/sreenuraj/desktop-mcp"
+      "cwd": "C:\\path\\to\\desktop-mcp",
+      "env": {
+        "DESKTOP_MCP_ADAPTER": "uia"
+      }
     }
   }
 }
 ```
 
-If you installed the package and want to use the console script:
-
-```json
-{
-  "mcpServers": {
-    "postqode-desktop": {
-      "command": "desktop-mcp",
-      "args": [],
-      "cwd": "/Users/sreenuraj/desktop-mcp"
-    }
-  }
-}
-```
-
-If your agent runs inside a virtual environment, point `command` at that environment's Python executable:
-
-```json
-{
-  "mcpServers": {
-    "postqode-desktop": {
-      "command": "/Users/sreenuraj/desktop-mcp/.venv/bin/python",
-      "args": ["-m", "desktop_mcp.server.stdio"],
-      "cwd": "/Users/sreenuraj/desktop-mcp"
-    }
-  }
-}
-```
-
-On Windows, the same pattern applies:
+If your agent runs inside a virtual environment, point the command to that environment's Python executable:
 
 ```json
 {
@@ -145,265 +109,65 @@ On Windows, the same pattern applies:
 }
 ```
 
-## Configuring the Adapter
-
-The Desktop MCP server dynamically selects the adapter to use:
-- **Default (Windows)**: Uses `WindowsUIAutomationAdapter` automatically when run on Windows (`win32`).
-- **Fallback**: On non-Windows platforms (macOS/Linux), it automatically falls back to `InMemoryDesktopAdapter`.
-- **Manual Override**: You can explicitly select the adapter by setting the `DESKTOP_MCP_ADAPTER` environment variable to either `"uia"` or `"memory"`.
-
-Example setting in your agent configuration `settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "postqode-desktop": {
-      "command": "python",
-      "args": ["-m", "desktop_mcp.server.stdio"],
-      "cwd": "/Users/sreenuraj/desktop-mcp",
-      "env": {
-        "DESKTOP_MCP_ADAPTER": "uia"
-      }
-    }
-  }
-}
-```
-
-## MCP Details
-
-Transport:
-
-- `stdio`
-
-Supported JSON-RPC methods:
-
-- `initialize`
-- `notifications/initialized`
-- `tools/list`
-- `tools/call`
-
-Tool call responses are returned as MCP text content. The text is a JSON string using the Desktop MCP response envelope:
-
-```json
-{
-  "success": true,
-  "data": {},
-  "error": null
-}
-```
-
-Failure example:
-
-```json
-{
-  "success": false,
-  "data": null,
-  "error": {
-    "code": "CONTROL_NOT_FOUND",
-    "message": "Control could not be located"
-  }
-}
-```
-
-## Example MCP Tool Flow
-
-Create a session:
-
-```json
-{
-  "name": "create_session",
-  "arguments": {}
-}
-```
-
-List windows:
-
-```json
-{
-  "name": "list_windows",
-  "arguments": {
-    "session_id": "session_001"
-  }
-}
-```
-
-Find a control:
-
-```json
-{
-  "name": "find_control",
-  "arguments": {
-    "session_id": "session_001",
-    "window_id": "win_demo",
-    "text": "Save"
-  }
-}
-```
-
-Click a control:
-
-```json
-{
-  "name": "click",
-  "arguments": {
-    "session_id": "session_001",
-    "control_id": "btn_save"
-  }
-}
-```
-
-Enter and read text:
-
-```json
-{
-  "name": "enter_text",
-  "arguments": {
-    "session_id": "session_001",
-    "control_id": "txt_customer",
-    "value": "John Doe"
-  }
-}
-```
-
-```json
-{
-  "name": "read_text",
-  "arguments": {
-    "session_id": "session_001",
-    "control_id": "txt_customer"
-  }
-}
-```
+---
 
 ## Tool Categories
 
-Session:
+The server exposes the following toolsets:
 
-- `create_session`
-- `close_session`
+### 1. Sessions
+- `create_session`: Creates a new session ID.
+- `close_session`: Teardown session and release locks.
 
-Application:
+### 2. Applications
+- `launch_application`: Launch an application executable.
+- `attach_application`: Connect to a running process ID.
+- `close_application`: Closes the application.
 
-- `launch_application`
-- `attach_application`
-- `close_application`
+### 3. Windows
+- `list_windows`: Lists all top-level windows.
+- `activate_window`: Brings the window into focus.
+- `wait_for_window`: Wait for a window with matching title to open.
+- `close_window`: Closes the target window.
+- `maximize_window` / `minimize_window`: Resize the window.
 
-Window:
+### 4. Snapshots & Discovery
+- `desktop_snapshot` / `window_snapshot`: Returns details and flat control lists.
+- `control_tree`: Returns recursive, hierarchical control nodes.
+- `find_control` / `find_controls` / `get_control`: Inspect and locate UI elements.
 
-- `list_windows`
-- `activate_window`
-- `wait_for_window`
-- `close_window`
-- `maximize_window`
-- `minimize_window`
+### 5. Interactions
+- `click` / `double_click` / `right_click` / `hover` / `focus`: Mouse and focus actions.
+- `enter_text` / `append_text` / `clear_text` / `read_text`: Keyboard and input actions.
+- `select_dropdown` / `select_tab` / `select_radio` / `check` / `uncheck`: Selection widgets.
 
-Snapshot and discovery:
+### 6. Validation
+- `control_exists` / `wait_for_control`: Verification & wait methods.
+- `assert_text` / `assert_control_state`: Check values. (Captures a screenshot automatically on failure).
 
-- `desktop_snapshot`
-- `window_snapshot`
-- `control_tree`
-- `find_control`
-- `find_controls`
-- `get_control`
+### 7. Grids
+- `read_table`: Returns columns and rows from a grid.
+- `find_row`: Searches a grid row matching criteria.
+- `select_row`: Selects the row at `row_index`.
+- `edit_cell` / `read_cell`: Modifies or reads a specific cell value.
 
-Interaction:
+### 8. Evidence & Browser Authentication
+- `capture_window` / `capture_desktop`: Screengrabs.
+- `start_recording` / `stop_recording`: Capture video evidence of workflows.
+- `wait_for_browser` / `attach_browser_window`: Bypasses OAuth/SSO login screens by switching control.
 
-- `click`
-- `double_click`
-- `right_click`
-- `hover`
-- `focus`
-- `drag_drop`
+---
 
-Text:
+## Running Tests
 
-- `enter_text`
-- `append_text`
-- `clear_text`
-- `read_text`
+Verify your installation by running the test suite:
 
-Selection:
+```bash
+python -m pytest
+```
 
-- `select_dropdown`
-- `select_tab`
-- `select_radio`
-- `check`
-- `uncheck`
-
-Grid and tree:
-
-- `read_table`
-- `find_row`
-- `select_row`
-- `edit_cell`
-- `read_cell`
-- `read_tree`
-- `expand_node`
-- `collapse_node`
-- `select_node`
-
-Dialogs and validation:
-
-- `detect_dialog`
-- `wait_for_dialog`
-- `accept_dialog`
-- `dismiss_dialog`
-- `control_exists`
-- `wait_for_control`
-- `assert_text`
-- `assert_control_state`
-- `assert_table_row`
-
-Evidence and browser auth:
-
-- `capture_window`
-- `capture_desktop`
-- `start_recording`
-- `stop_recording`
-- `wait_for_browser`
-- `attach_browser_window`
-
-## Session Behavior
-
-Most tools are stateful and require an active session. Start every workflow with `create_session`.
-
-The current server supports explicit session IDs in tool arguments. If an agent omits `session_id` after creating a session, the in-process server can use the active session, but explicit `session_id` is recommended for reliable multi-session behavior.
-
-## Development Notes
-
-The in-memory adapter returns a demo window named `Customer Management` with controls such as:
-
-- `btn_save`
-- `txt_customer`
-- `ddl_state`
-- `grid_customers`
-
-This lets agents and tests exercise the MCP contract before the Windows UI Automation adapter is complete.
-
-## Windows Adapter Roadmap
-
-The next implementation step is to replace the placeholder methods in `desktop_mcp/adapters/windows/uia_adapter.py` with real Windows automation:
-
-- Process launch/attach through `pywinauto` and `psutil`
-- Window enumeration through UI Automation/Win32 APIs
-- Control snapshots through Microsoft UI Automation
-- Interaction through UIA patterns first, then safe fallbacks
-- Screenshot capture through `mss`/`Pillow`
-
-Agents should not call Windows APIs directly. They should use MCP tools only.
-
-## Repository Layout
+Expected result:
 
 ```text
-desktop_mcp/
-  adapters/
-    memory.py
-    windows/uia_adapter.py
-  models/
-  server/
-    mcp_server.py
-    stdio.py
-  session/
-docs/
-tests/
+40 passed
 ```
