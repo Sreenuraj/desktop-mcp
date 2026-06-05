@@ -1,0 +1,27 @@
+[project]
+name = "desktop-mcp"
+version = "0.1.0"
+description = "PostQode Desktop MCP framework MVP"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+windows = [
+  "pywinauto>=0.6.8",
+  "pywin32>=306",
+  "comtypes>=1.2",
+  "psutil>=5.9",
+  "Pillow>=10.0",
+  "mss>=9.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

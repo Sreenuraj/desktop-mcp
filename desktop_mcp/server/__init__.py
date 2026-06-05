@@ -1,0 +1,1 @@
+"""Desktop MCP server package."""
