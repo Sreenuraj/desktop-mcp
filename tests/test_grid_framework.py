@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest import mock
 import pytest
 
+from desktop_mcp.adapters.memory import InMemoryDesktopAdapter
 from desktop_mcp.adapters.windows.uia_adapter import WindowsUIAutomationAdapter
 from desktop_mcp.server.mcp_server import DesktopMCPServer
 
@@ -144,7 +145,7 @@ def test_edit_cell_sets_text_on_element(adapter):
 
 def test_memory_adapter_grid_operations():
     # Test through the MCP server with the in-memory adapter
-    server = DesktopMCPServer()
+    server = DesktopMCPServer(adapter=InMemoryDesktopAdapter())
     server.call_tool("create_session", {})
 
     # 1. read_table

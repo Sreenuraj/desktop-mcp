@@ -1,8 +1,9 @@
 from desktop_mcp import DesktopMCPServer
+from desktop_mcp.adapters.memory import InMemoryDesktopAdapter
 
 
 def new_server() -> tuple[DesktopMCPServer, str]:
-    server = DesktopMCPServer()
+    server = DesktopMCPServer(adapter=InMemoryDesktopAdapter())
     response = server.call_tool("create_session", {})
     return server, response["data"]["session_id"]
 
