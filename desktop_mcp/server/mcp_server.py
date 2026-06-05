@@ -12,7 +12,16 @@ from desktop_mcp.session.session_manager import SessionManager
 
 class DesktopMCPServer:
     def __init__(self, adapter: DesktopAdapter | None = None, session_manager: SessionManager | None = None) -> None:
-        self.adapter = adapter or InMemoryDesktopAdapter()
+        if adapter is None:
+            import os
+            import sys
+            adapter_type = os.environ.get("DESKTOP_MCP_ADAPTER")
+            if adapter_type == "uia" or (adapter_type is None and sys.platform == "win32"):
+                from desktop_mcp.adapters.windows import WindowsUIAutomationAdapter
+                adapter = WindowsUIAutomationAdapter()
+            else:
+                adapter = InMemoryDesktopAdapter()
+        self.adapter = adapter
         self.sessions = session_manager or SessionManager()
         self._tools: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "create_session": self.create_session,

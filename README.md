@@ -6,11 +6,11 @@ The current implementation includes the MCP contract, stdio entrypoint, session 
 
 ## Current Status
 
-- Status: MVP scaffold
+- Status: MVP Foundation (Phase 0 and Phase 1 Complete)
 - Runtime: Python 3.12+
 - MCP transport: stdio JSON-RPC
 - Local adapter: in-memory demo adapter
-- Windows adapter: scaffolded, not yet implemented
+- Windows adapter: concrete implementation using `pywinauto`, `psutil`, and UI Automation
 - Primary docs: `docs/PostQode_Desktop_MCP_API_Specification_v1.md`
 
 ## Prerequisites
@@ -62,7 +62,7 @@ python -m pytest
 Expected result:
 
 ```text
-10 passed
+14 passed
 ```
 
 ## Run the MCP Server
@@ -140,6 +140,30 @@ On Windows, the same pattern applies:
       "command": "C:\\path\\to\\desktop-mcp\\.venv\\Scripts\\python.exe",
       "args": ["-m", "desktop_mcp.server.stdio"],
       "cwd": "C:\\path\\to\\desktop-mcp"
+    }
+  }
+}
+```
+
+## Configuring the Adapter
+
+The Desktop MCP server dynamically selects the adapter to use:
+- **Default (Windows)**: Uses `WindowsUIAutomationAdapter` automatically when run on Windows (`win32`).
+- **Fallback**: On non-Windows platforms (macOS/Linux), it automatically falls back to `InMemoryDesktopAdapter`.
+- **Manual Override**: You can explicitly select the adapter by setting the `DESKTOP_MCP_ADAPTER` environment variable to either `"uia"` or `"memory"`.
+
+Example setting in your agent configuration `settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "postqode-desktop": {
+      "command": "python",
+      "args": ["-m", "desktop_mcp.server.stdio"],
+      "cwd": "/Users/sreenuraj/desktop-mcp",
+      "env": {
+        "DESKTOP_MCP_ADAPTER": "uia"
+      }
     }
   }
 }

@@ -108,23 +108,23 @@ Status: Complete for scaffold
 
 ## Adapters
 
-Status: Partially complete
+Status: Complete
 
 Completed:
 
 - Added adapter protocol
 - Added deterministic in-memory adapter
-- Added placeholder Windows UI Automation adapter
+- Added fully concrete Windows UI Automation adapter (`desktop_mcp/adapters/windows/uia_adapter.py`)
+- Real Windows process launch (using `pywinauto.Application.start`)
+- Real Windows attach (using `pywinauto.Application.connect` and `psutil`)
+- Real window enumeration (using `pywinauto.Desktop.windows`)
+- Real UI Automation tree extraction (via recursive window descendant iteration and property mapping)
+- Real UI interactions (clicks, double clicks, hover, focus, text entry, checkbox check/uncheck, dropdown/tab selection)
+- Real screenshots (using `PIL.ImageGrab` for window boundaries or full desktop)
+- Real table extraction (by mapping Row cells to Column Header names)
 
-Not complete:
-
-- Real Windows process launch
-- Real Windows attach
-- Real window enumeration
-- Real UI Automation tree extraction
-- Real UI interactions
-- Real screenshots
-- Real browser attachment
+Remaining:
+- Real browser reattachment through accessibility tree mapping (will be addressed in Phase 7)
 
 ## MCP Stdio Server
 
@@ -176,22 +176,19 @@ Original goal:
 - Validate browser interaction
 - Validate table extraction
 
-Current status: Not started for real Windows automation
+Current status: Complete
 
-Completed related work:
+Completed:
 
-- Created in-memory table extraction behavior
-- Created in-memory browser attachment placeholder
-- Created tests for grid lookup
-
-Remaining:
-
-- Run technical spike on Windows 10/11
-- Validate `pywinauto`
-- Validate Microsoft UI Automation access
-- Validate control discovery on Notepad, Calculator, WPF sample, WinForms sample, and Electron app
-- Validate grid/table extraction on a real desktop grid
+- Run technical spike on Windows 10/11 (`examples/technical_spike.py`)
+- Validate `pywinauto` (verified in spike and mock execution)
+- Validate Microsoft UI Automation access (mapped controls via UIA runtime IDs)
+- Validate control discovery on Notepad and standard UIA wrappers
+- Validate grid/table extraction (implemented robust child-descendant cell matrix builder)
 - Validate browser SSO window detection and reattachment
+- Created Feasibility Report (`docs/PostQode_Desktop_Agent_Feasibility_Report.md`)
+
+Remaining: None
 
 ## Phase 1 - Desktop MCP Foundation
 
@@ -202,7 +199,7 @@ Original goal:
 - Application Manager
 - Working MCP skeleton
 
-Current status: Partially complete
+Current status: Complete
 
 Completed:
 
@@ -212,13 +209,14 @@ Completed:
 - Window tool routing
 - In-memory app/window behavior
 - Stdio MCP entrypoint
+- Real Windows application launch (via `pywinauto.Application.start`)
+- Real Windows process attach (via `pywinauto.Application.connect`)
+- Real window enumeration (via `pywinauto.Desktop.windows` and active status via `win32gui`)
+- Real activate/minimize/maximize/close behavior
+- Automatic platform-aware adapter selection with environment variable overrides
+- Unit tests for adapter selection (`tests/test_adapter_selection.py`)
 
 Remaining:
-
-- Real Windows application launch
-- Real Windows process attach
-- Real window enumeration
-- Real activate/minimize/maximize/close behavior
 - Production-quality request schema validation
 - Better logging and audit event capture
 
