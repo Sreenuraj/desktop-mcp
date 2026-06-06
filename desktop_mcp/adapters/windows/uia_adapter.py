@@ -965,7 +965,27 @@ class WindowsUIAutomationAdapter:
                 del self._controls_cache[control_id]
 
         desktop = PyWinDesktop(backend="uia")
+        active_handle = None
+
+        # 1. Try active window first (fast path)
+        try:
+            active_win = desktop.active()
+            active_handle = active_win.handle
+            for desc in active_win.descendants():
+                desc_id = self._get_control_id(desc)
+                self._controls_cache[desc_id] = desc
+                if desc_id == control_id:
+                    return desc
+        except Exception:
+            pass
+
+        # 2. Fall back to other windows on the desktop
         for win in desktop.windows():
+            try:
+                if active_handle and win.handle == active_handle:
+                    continue
+            except Exception:
+                pass
             try:
                 for desc in win.descendants():
                     desc_id = self._get_control_id(desc)
