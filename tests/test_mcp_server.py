@@ -128,3 +128,19 @@ def test_restore_window():
 
     assert response["success"] is True
     assert response["data"] == {}
+
+
+def test_screenshot_highlighting():
+    server, session_id = new_server()
+
+    response = server.call_tool(
+        "capture_window",
+        {
+            "session_id": session_id,
+            "window_id": "win_demo",
+            "highlight_rect": [10, 20, 100, 200],
+        },
+    )
+
+    assert response["success"] is True
+    assert "artifact" in response["data"]

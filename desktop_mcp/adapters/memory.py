@@ -219,7 +219,12 @@ class InMemoryDesktopAdapter:
                 return {"row_index": index, "row": row}
         raise ControlNotFoundError("Table row could not be located")
 
-    def capture_window(self, window_id: str, path: str | None = None) -> dict:
+    def capture_window(
+        self,
+        window_id: str,
+        path: str | None = None,
+        highlight_rect: tuple[int, int, int, int] | None = None,
+    ) -> dict:
         import os
 
         window = self.get_window(window_id)
@@ -232,7 +237,11 @@ class InMemoryDesktopAdapter:
                 f.write("dummy window screenshot")
         return {"window_id": window.window_id, "artifact": artifact_path}
 
-    def capture_desktop(self, path: str | None = None) -> dict:
+    def capture_desktop(
+        self,
+        path: str | None = None,
+        highlight_rect: tuple[int, int, int, int] | None = None,
+    ) -> dict:
         import os
 
         artifact_path = path or "memory://screenshots/desktop.png"

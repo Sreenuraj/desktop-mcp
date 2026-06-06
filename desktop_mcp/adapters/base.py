@@ -51,10 +51,19 @@ class DesktopAdapter(Protocol):
     def read_table(self, control_id: str) -> dict:
         ...
 
-    def capture_window(self, window_id: str, path: str | None = None) -> dict:
+    def capture_window(
+        self,
+        window_id: str,
+        path: str | None = None,
+        highlight_rect: tuple[int, int, int, int] | None = None,
+    ) -> dict:
         ...
 
-    def capture_desktop(self, path: str | None = None) -> dict:
+    def capture_desktop(
+        self,
+        path: str | None = None,
+        highlight_rect: tuple[int, int, int, int] | None = None,
+    ) -> dict:
         ...
 
     def wait_for_browser(self, timeout: float = 60.0) -> dict:

@@ -527,6 +527,15 @@ class DesktopMCPServer:
         try:
             import os
 
+            highlight_rect = None
+            try:
+                control = self.adapter.get_control(control_id)
+                if control.bounds:
+                    b = control.bounds
+                    highlight_rect = (b["left"], b["top"], b["left"] + b["width"], b["top"] + b["height"])
+            except Exception:
+                pass
+
             if session_id:
                 import time
 
@@ -534,9 +543,9 @@ class DesktopMCPServer:
                 path = os.path.join(
                     ev_dir, f"failure_{control_id}_{int(time.time())}.png"
                 )
-                self.adapter.capture_desktop(path=path)
+                self.adapter.capture_desktop(path=path, highlight_rect=highlight_rect)
             else:
-                self.adapter.capture_desktop()
+                self.adapter.capture_desktop(highlight_rect=highlight_rect)
         except Exception:
             pass
 
@@ -546,25 +555,37 @@ class DesktopMCPServer:
     def capture_window(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = payload.get("session_id")
         window_id = self._required(payload, "window_id")
+        highlight_rect = payload.get("highlight_rect")
+        if isinstance(highlight_rect, list) and len(highlight_rect) == 4:
+            highlight_rect = tuple(highlight_rect)
+        else:
+            highlight_rect = None
+
         if session_id:
             import time
             import os
 
             ev_dir = self._get_evidence_dir(session_id)
             path = os.path.join(ev_dir, f"window_{window_id}_{int(time.time())}.png")
-            return self.adapter.capture_window(window_id, path=path)
-        return self.adapter.capture_window(window_id)
+            return self.adapter.capture_window(window_id, path=path, highlight_rect=highlight_rect)
+        return self.adapter.capture_window(window_id, highlight_rect=highlight_rect)
 
     def capture_desktop(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = payload.get("session_id")
+        highlight_rect = payload.get("highlight_rect")
+        if isinstance(highlight_rect, list) and len(highlight_rect) == 4:
+            highlight_rect = tuple(highlight_rect)
+        else:
+            highlight_rect = None
+
         if session_id:
             import time
             import os
 
             ev_dir = self._get_evidence_dir(session_id)
             path = os.path.join(ev_dir, f"desktop_{int(time.time())}.png")
-            return self.adapter.capture_desktop(path=path)
-        return self.adapter.capture_desktop()
+            return self.adapter.capture_desktop(path=path, highlight_rect=highlight_rect)
+        return self.adapter.capture_desktop(highlight_rect=highlight_rect)
 
     def start_recording(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._required(payload, "session_id")

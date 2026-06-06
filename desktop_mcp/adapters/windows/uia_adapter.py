@@ -755,13 +755,30 @@ class WindowsUIAutomationAdapter:
                 return {"row_index": index, "row": row}
         raise ControlNotFoundError("Table row could not be located")
 
-    def capture_window(self, window_id: str, path: str | None = None) -> dict:
+    def capture_window(
+        self,
+        window_id: str,
+        path: str | None = None,
+        highlight_rect: tuple[int, int, int, int] | None = None,
+    ) -> dict:
         self._check_platform()
         try:
             win = self._resolve_window(window_id)
             rect = win.rectangle()
             bbox = (rect.left, rect.top, rect.right, rect.bottom)
             screenshot = ImageGrab.grab(bbox=bbox)
+
+            if highlight_rect:
+                try:
+                    from PIL import ImageDraw
+                    rel_left = highlight_rect[0] - rect.left
+                    rel_top = highlight_rect[1] - rect.top
+                    rel_right = highlight_rect[2] - rect.left
+                    rel_bottom = highlight_rect[3] - rect.top
+                    draw = ImageDraw.Draw(screenshot)
+                    draw.rectangle((rel_left, rel_top, rel_right, rel_bottom), outline="red", width=3)
+                except Exception:
+                    pass
 
             if path is None:
                 os.makedirs("screenshots", exist_ok=True)
@@ -777,10 +794,23 @@ class WindowsUIAutomationAdapter:
         except Exception as exc:
             raise DesktopMCPError(f"Failed to capture window: {exc}") from exc
 
-    def capture_desktop(self, path: str | None = None) -> dict:
+    def capture_desktop(
+        self,
+        path: str | None = None,
+        highlight_rect: tuple[int, int, int, int] | None = None,
+    ) -> dict:
         self._check_platform()
         try:
             screenshot = ImageGrab.grab()
+
+            if highlight_rect:
+                try:
+                    from PIL import ImageDraw
+                    draw = ImageDraw.Draw(screenshot)
+                    draw.rectangle(highlight_rect, outline="red", width=3)
+                except Exception:
+                    pass
+
             if path is None:
                 os.makedirs("screenshots", exist_ok=True)
                 path = os.path.abspath("screenshots/desktop.png")

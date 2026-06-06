@@ -856,7 +856,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "capture_window": {
         "description": (
             "Take a screenshot of a specific window. Returns the file "
-            "path of the saved PNG image."
+            "path of the saved PNG image. Supports highlighting a control."
         ),
         "inputSchema": {
             "type": "object",
@@ -864,7 +864,17 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "window_id": {
                     "type": "string",
                     "description": "The window ID to capture.",
-                }
+                },
+                "highlight_rect": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "description": (
+                        "Optional absolute screen coordinates [left, top, right, bottom] "
+                        "to draw a red highlighting rectangle around in the screenshot."
+                    ),
+                },
             },
             "required": ["window_id"],
         },
@@ -872,11 +882,22 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "capture_desktop": {
         "description": (
             "Take a screenshot of the entire desktop. Returns the file "
-            "path of the saved PNG image."
+            "path of the saved PNG image. Supports highlighting a control."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "highlight_rect": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "description": (
+                        "Optional absolute screen coordinates [left, top, right, bottom] "
+                        "to draw a red highlighting rectangle around in the screenshot."
+                    ),
+                },
+            },
             "required": [],
         },
     },
