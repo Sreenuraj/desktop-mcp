@@ -5,6 +5,7 @@ import sys
 from typing import Any, TextIO
 
 from desktop_mcp.server.mcp_server import DesktopMCPServer
+from desktop_mcp.server.tool_schemas import TOOL_SCHEMAS
 
 
 def handle_request(
@@ -22,20 +23,24 @@ def handle_request(
         if method == "initialize":
             result = {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "desktop-mcp", "version": "0.1.0"},
+                "serverInfo": {"name": "desktop-mcp", "version": "0.2.0"},
                 "capabilities": {"tools": {}},
             }
         elif method == "tools/list":
-            result = {
-                "tools": [
-                    {
-                        "name": name,
-                        "description": f"Desktop MCP tool: {name}",
-                        "inputSchema": {"type": "object", "additionalProperties": True},
-                    }
-                    for name in server.tools
-                ]
-            }
+            tools_list = []
+            for name in server.tools:
+                schema = TOOL_SCHEMAS.get(name, {})
+                tools_list.append({
+                    "name": name,
+                    "description": schema.get(
+                        "description", f"Desktop MCP tool: {name}"
+                    ),
+                    "inputSchema": schema.get(
+                        "inputSchema",
+                        {"type": "object", "additionalProperties": True},
+                    ),
+                })
+            result = {"tools": tools_list}
         elif method == "tools/call":
             tool_name = params.get("name")
             if not isinstance(tool_name, str):

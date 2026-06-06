@@ -102,3 +102,30 @@ def test_unknown_tool_returns_invalid_request():
 
     assert response["success"] is False
     assert response["error"]["code"] == "INVALID_REQUEST"
+
+
+def test_click_at():
+    server, session_id = new_server()
+
+    response = server.call_tool(
+        "click_at",
+        {"session_id": session_id, "x": 100, "y": 200, "button": "right"},
+    )
+
+    assert response["success"] is True
+    assert response["data"]["x"] == 100
+    assert response["data"]["y"] == 200
+    assert response["data"]["button"] == "right"
+
+
+def test_restore_window():
+    server, session_id = new_server()
+
+    response = server.call_tool(
+        "restore_window",
+        {"session_id": session_id, "window_id": "win_demo"},
+    )
+
+    assert response["success"] is True
+    assert response["data"] == {}
+

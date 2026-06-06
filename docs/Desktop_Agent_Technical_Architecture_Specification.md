@@ -1,4 +1,4 @@
-# PostQode Desktop Agent
+# Desktop Agent
 # Technical Architecture Specification (TAS)
 
 Version: 1.0
@@ -9,9 +9,9 @@ Target Platform: Windows (Phase 1)
 
 # 1. Purpose
 
-This document defines the technical architecture for the PostQode Desktop Agent and Desktop MCP framework.
+This document defines the technical architecture for the Desktop Agent and Desktop MCP framework.
 
-The objective is to enable PostQode Agents to interact with native desktop applications using a structured, accessibility-first approach while remaining platform-independent.
+The objective is to enable Desktop Agents to interact with native desktop applications using a structured, accessibility-first approach while remaining platform-independent.
 
 Phase 1 focuses exclusively on Windows desktop applications.
 
@@ -23,7 +23,7 @@ The Desktop MCP API Specification is the canonical source for external tool name
 
 ```text
 +------------------------------------------------+
-|                 PostQode Agent                 |
+|                 Desktop Agent                 |
 +------------------------------------------------+
                      |
                      v

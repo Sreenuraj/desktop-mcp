@@ -25,6 +25,22 @@ def test_tools_list_returns_desktop_mcp_tools():
     assert "window_snapshot" in tool_names
 
 
+def test_all_tools_have_defined_schemas():
+    response = handle_request(
+        DesktopMCPServer(),
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    )
+
+    for tool in response["result"]["tools"]:
+        name = tool["name"]
+        description = tool["description"]
+        # Ensure the description is not the fallback
+        assert description != f"Desktop MCP tool: {name}", f"Tool '{name}' is missing a detailed schema description"
+        assert "inputSchema" in tool
+        assert tool["inputSchema"]["type"] == "object"
+
+
+
 def test_tools_call_wraps_desktop_mcp_response_as_text_content():
     server = DesktopMCPServer()
     response = handle_request(

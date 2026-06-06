@@ -328,3 +328,6 @@ class InMemoryDesktopAdapter:
                 f"Browser window with title containing " f"'{title_contains}' not found"
             )
         return {"window_id": browser_win_id}
+
+    def click_at(self, x: int, y: int, button: str = "left") -> dict:
+        return {"x": x, "y": y, "button": button}

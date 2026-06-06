@@ -5,7 +5,7 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-echo -e "\033[36mSetting up PostQode Desktop MCP...\033[0m"
+echo -e "\033[36mSetting up Desktop MCP...\033[0m"
 
 # Check Python
 if ! command -v python3 &> /dev/null; then
@@ -26,7 +26,7 @@ PYTHON_PATH="$REPO_DIR/.venv/bin/python"
 SETTINGS_JSON=$(cat <<EOF
 {
   "mcpServers": {
-    "postqode-desktop": {
+    "desktop-mcp": {
       "command": "$PYTHON_PATH",
       "args": ["-m", "desktop_mcp.server.stdio"],
       "cwd": "$REPO_DIR"

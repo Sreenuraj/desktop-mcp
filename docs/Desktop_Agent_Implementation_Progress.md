@@ -1,4 +1,4 @@
-# PostQode Desktop Agent
+# Desktop Agent
 ## Implementation Progress Tracker
 
 Version: 1.0
@@ -186,7 +186,7 @@ Completed:
 - Validate control discovery on Notepad and standard UIA wrappers
 - Validate grid/table extraction (implemented robust child-descendant cell matrix builder)
 - Validate browser SSO window detection and reattachment
-- Created Feasibility Report (`docs/PostQode_Desktop_Agent_Feasibility_Report.md`)
+- Created Feasibility Report (`docs/Desktop_Agent_Feasibility_Report.md`)
 
 Remaining: None
 

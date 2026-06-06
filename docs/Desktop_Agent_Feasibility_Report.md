@@ -1,4 +1,4 @@
-# PostQode Desktop Agent
+# Desktop Agent
 ## Phase 0 - Technical Feasibility Report
 
 ## 1. Executive Summary

@@ -1,22 +1,22 @@
-# PostQode Desktop Agent
+# Desktop Agent
 ## MVP Build Plan & Implementation Roadmap
 
 Version: 1.0
 Status: Draft
 
-Progress Tracker: `docs/PostQode_Desktop_Agent_Implementation_Progress.md`
+Progress Tracker: `docs/Desktop_Agent_Implementation_Progress.md`
 
 ---
 
 # 1. Executive Summary
 
-This document defines the implementation roadmap for delivering the first production-ready version of the PostQode Desktop Agent.
+This document defines the implementation roadmap for delivering the first production-ready version of the Desktop Agent.
 
-The objective is to validate that PostQode can automate enterprise Windows desktop applications using a Desktop MCP architecture built on Microsoft UI Automation.
+The objective is to validate that Desktop MCP can automate enterprise Windows desktop applications using a Desktop MCP architecture built on Microsoft UI Automation.
 
 The Desktop MCP API Specification is the canonical source for external tool names, request fields, response envelopes, and error codes.
 
-Current implementation status, completed tasks, remaining work, and next priorities are tracked in `PostQode_Desktop_Agent_Implementation_Progress.md`.
+Current implementation status, completed tasks, remaining work, and next priorities are tracked in `Desktop_Agent_Implementation_Progress.md`.
 
 The MVP focuses on:
 

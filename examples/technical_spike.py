@@ -65,10 +65,10 @@ def run_windows_spike() -> None:
     # 4. Text Interaction
     print("Step 4: Entering text into Document control...")
     if hasattr(edit_control, "set_edit_text"):
-        edit_control.set_edit_text("Hello, PostQode Desktop Agent Spike!")
+        edit_control.set_edit_text("Hello, Desktop MCP Agent Spike!")
     else:
         # Fallback to key entry
-        notepad_win.type_keys("Hello, PostQode Desktop Agent Spike!", with_spaces=True)
+        notepad_win.type_keys("Hello, Desktop MCP Agent Spike!", with_spaces=True)
     time.sleep(0.5)
 
     # 5. Capture Screenshot
@@ -103,7 +103,7 @@ def run_mock_spike() -> None:
         print(f" - Control: Name='{c['name']}', Type='{c['type']}', AutoID='{c['auto_id']}'")
         
     print("Step 4: Simulating text entry into 'Text Editor' Document control...")
-    print(" - Action 'enter_text' value='Hello, PostQode Desktop Agent Spike!' successful.")
+    print(" - Action 'enter_text' value='Hello, Desktop MCP Agent Spike!' successful.")
     
     print("Step 5: Simulating screenshot capture of window bounds (left=100, top=100, right=800, bottom=600)...")
     print(" - Screenshot artifact simulated: mock_notepad_screenshot.png")

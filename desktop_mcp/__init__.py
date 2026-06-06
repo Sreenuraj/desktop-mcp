@@ -1,4 +1,4 @@
-"""PostQode Desktop MCP package."""
+"""Desktop MCP package."""
 
 from desktop_mcp.server.mcp_server import DesktopMCPServer
 

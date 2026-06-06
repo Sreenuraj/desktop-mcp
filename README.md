@@ -1,6 +1,6 @@
-# PostQode Desktop MCP
+# Desktop MCP
 
-PostQode Desktop MCP is a Model Context Protocol (MCP) server designed for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, perform mouse clicks, read grids, and capture screenshots without relying on fragile coordinate-based scripts.
+Desktop MCP is a Model Context Protocol (MCP) server designed for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, perform mouse clicks, read grids, and capture screenshots without relying on fragile coordinate-based scripts.
 
 ---
 
@@ -107,7 +107,7 @@ Add this configuration to your client settings (`settings.json` or `claude_deskt
 ```json
 {
   "mcpServers": {
-    "postqode-desktop": {
+    "desktop-mcp": {
       "command": "python",
       "args": ["-m", "desktop_mcp.server.stdio"],
       "cwd": "C:\\path\\to\\desktop-mcp",
@@ -124,7 +124,7 @@ If your agent runs inside a virtual environment, point the command to that envir
 ```json
 {
   "mcpServers": {
-    "postqode-desktop": {
+    "desktop-mcp": {
       "command": "C:\\path\\to\\desktop-mcp\\.venv\\Scripts\\python.exe",
       "args": ["-m", "desktop_mcp.server.stdio"],
       "cwd": "C:\\path\\to\\desktop-mcp"
@@ -193,5 +193,5 @@ python -m pytest
 Expected result:
 
 ```text
-40 passed
+57 passed
 ```

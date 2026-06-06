@@ -4,7 +4,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (!$ScriptDir) { $ScriptDir = Get-Location }
 Set-Location -Path $ScriptDir
 
-Write-Host "Setting up PostQode Desktop MCP..." -ForegroundColor Cyan
+Write-Host "Setting up Desktop MCP..." -ForegroundColor Cyan
 
 # Check Python
 $PythonCmd = "python"
@@ -34,7 +34,7 @@ $EscapedPython = $VenvPython -replace '\\', '\\'
 $SettingsJson = @"
 {
   "mcpServers": {
-    "postqode-desktop": {
+    "desktop-mcp": {
       "command": "$EscapedPython",
       "args": ["-m", "desktop_mcp.server.stdio"],
       "cwd": "$EscapedCwd"

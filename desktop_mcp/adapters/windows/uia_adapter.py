@@ -24,6 +24,7 @@ win32gui: Any = None
 ImageGrab: Any = None
 PyWinApplication: Any = None
 PyWinDesktop: Any = None
+pywinauto_mouse: Any = None
 
 try:
     if sys.platform == "win32":
@@ -45,6 +46,9 @@ try:
         from pywinauto import Desktop as PyWinDesktop_mod
 
         PyWinDesktop = PyWinDesktop_mod
+        from pywinauto import mouse as pywinauto_mouse_mod
+
+        pywinauto_mouse = pywinauto_mouse_mod
 except ImportError:
     pass
 
@@ -128,12 +132,75 @@ class WindowsUIAutomationAdapter:
         args_str = " ".join(arguments) if arguments else ""
         cmd_line = f'"{path}" {args_str}'.strip()
         try:
+            # Take a snapshot of existing window handles before launch
+            existing_handles: set[int] = set()
+            try:
+                for w in PyWinDesktop(backend="uia").windows():
+                    existing_handles.add(w.handle)
+            except Exception:
+                pass
+
             app = PyWinApplication(backend="uia").start(cmd_line)
             process_id = app.process
+
+            # Wait briefly — UWP apps (e.g. calc.exe) are shims that
+            # spawn a separate process and exit immediately.
+            import time
+            time.sleep(1.5)
+
+            # Check if the launched process is still alive
+            process_alive = False
+            try:
+                proc = psutil.Process(process_id)
+                process_alive = proc.is_running() and proc.status() != "zombie"
+            except Exception:
+                pass
+
+            if process_alive:
+                # Normal Win32 app — the original PID is correct
+                application_id = f"app_{process_id}"
+                self._apps[application_id] = app
+                return Application(
+                    application_id=application_id,
+                    process_id=process_id,
+                    path=path,
+                )
+
+            # UWP shim case: original process died, find the new window
+            new_win = None
+            for w in PyWinDesktop(backend="uia").windows():
+                if w.handle not in existing_handles:
+                    try:
+                        title = w.window_text() or ""
+                        if title:
+                            new_win = w
+                            break
+                    except Exception:
+                        continue
+
+            if new_win is not None:
+                real_pid = new_win.process_id()
+                application_id = f"app_{real_pid}"
+                try:
+                    real_app = PyWinApplication(backend="uia").connect(
+                        handle=new_win.handle
+                    )
+                    self._apps[application_id] = real_app
+                except Exception:
+                    self._apps[application_id] = app
+                return Application(
+                    application_id=application_id,
+                    process_id=real_pid,
+                    path=path,
+                )
+
+            # Fallback: return original PID even though it may be dead
             application_id = f"app_{process_id}"
             self._apps[application_id] = app
             return Application(
-                application_id=application_id, process_id=process_id, path=path
+                application_id=application_id,
+                process_id=process_id,
+                path=path,
             )
         except Exception as exc:
             raise DesktopMCPError(
@@ -255,19 +322,34 @@ class WindowsUIAutomationAdapter:
             application_id = f"app_{process_id}"
             active = win32gui.GetForegroundWindow() == handle
 
+            # Auto-restore minimized windows so we can extract controls
+            try:
+                if win_wrapper.is_minimized():
+                    win_wrapper.restore()
+                    import time
+                    time.sleep(0.3)
+            except Exception:
+                pass
+
             # Recursively build hierarchical controls starting from immediate children
-            controls = []
+            controls: list[Control] = []
             try:
                 for child in win_wrapper.children():
                     controls.extend(self._build_control_tree(child))
             except Exception:
-                # Robust fallback: extract a flat list of descendants
-                for desc in win_wrapper.descendants():
-                    try:
-                        if self._should_include_control(desc):
-                            controls.append(self._map_control(desc))
-                    except Exception:
-                        continue
+                pass
+
+            # If children() returned nothing, try descendants() as fallback
+            if not controls:
+                try:
+                    for desc in win_wrapper.descendants():
+                        try:
+                            if self._should_include_control(desc):
+                                controls.append(self._map_control(desc))
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
 
             return Window(
                 window_id=window_id,
@@ -390,6 +472,14 @@ class WindowsUIAutomationAdapter:
         el = self._resolve_control(control_id)
         if not el.is_enabled():
             raise ControlDisabledError(f"Control is disabled: {control_id}")
+
+        # Auto-refocus the parent window before interacting — this
+        # prevents focus-loss issues when the AI agent runs inside
+        # an IDE (e.g. VSCode) that steals focus.
+        try:
+            el.top_level_parent().set_focus()
+        except Exception:
+            pass
 
         try:
             if action == "click":
@@ -823,6 +913,22 @@ class WindowsUIAutomationAdapter:
 
         raise WindowNotFoundError("Browser window not found")
 
+    def click_at(self, x: int, y: int, button: str = "left") -> dict:
+        """Perform a mouse click at absolute screen coordinates."""
+        self._check_platform()
+        try:
+            if button == "double":
+                pywinauto_mouse.double_click(coords=(x, y))
+            elif button == "right":
+                pywinauto_mouse.right_click(coords=(x, y))
+            else:
+                pywinauto_mouse.click(coords=(x, y))
+            return {"x": x, "y": y, "button": button}
+        except Exception as exc:
+            raise DesktopMCPError(
+                f"Failed to click at ({x}, {y}): {exc}"
+            ) from exc
+
     def _resolve_window(self, window_id: str) -> Any:
         try:
             handle = (
@@ -831,10 +937,21 @@ class WindowsUIAutomationAdapter:
         except (ValueError, IndexError) as exc:
             raise WindowNotFoundError(f"Invalid window ID: {window_id}") from exc
 
+        # Use Application.connect(handle=...) so that the returned wrapper
+        # is bound to the real process and can fully traverse the UIA tree.
+        # This fixes empty control trees for UWP apps and modern Windows apps.
+        try:
+            app = PyWinApplication(backend="uia").connect(handle=handle)
+            win = app.window(handle=handle)
+            _ = win.window_text()
+            return win
+        except Exception:
+            pass
+
+        # Fallback to Desktop-based resolution
         try:
             desktop = PyWinDesktop(backend="uia")
             win = desktop.window(handle=handle)
-            # Access a property to force validation of window existence
             _ = win.window_text()
             return win
         except Exception as exc:

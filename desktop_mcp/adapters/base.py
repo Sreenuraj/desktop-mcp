@@ -62,3 +62,6 @@ class DesktopAdapter(Protocol):
 
     def attach_browser_window(self, title_contains: str | None = None) -> dict:
         ...
+
+    def click_at(self, x: int, y: int, button: str = "left") -> dict:
+        ...

@@ -1,11 +1,11 @@
-# PostQode Desktop MCP API Specification
+# Desktop MCP API Specification
 ## Version 1.0
 
 ### Status
 Draft
 
 ### Purpose
-This document defines the canonical API contract between PostQode Agents and the Desktop MCP Server.
+This document defines the canonical API contract between Desktop Agents and the Desktop MCP Server.
 
 All product, architecture, and build-plan documents should use the tool names, request fields, and response format defined here.
 

@@ -1,4 +1,4 @@
-# PostQode Desktop Agent & Desktop MCP Framework
+# Desktop Agent & Desktop MCP Framework
 ## Product Requirements Document (PRD)
 
 ### Version
@@ -12,9 +12,9 @@ Phase 1: Windows Support Only
 
 # 1. Overview
 
-The PostQode Desktop Agent enables AI-driven interaction, testing, validation, and automation of desktop applications running on Windows.
+The Desktop Agent enables AI-driven interaction, testing, validation, and automation of desktop applications running on Windows.
 
-The solution extends PostQode's existing Agent architecture beyond web applications and APIs to support enterprise thick-client applications.
+The solution extends Desktop MCP's existing Agent architecture beyond web applications and APIs to support enterprise thick-client applications.
 
 The Desktop MCP API Specification is the canonical source for tool names, request fields, response envelopes, and error codes.
 
@@ -62,7 +62,7 @@ Future:
 # 4. Architecture
 
 ```text
-PostQode Agent
+Desktop Agent
        |
        v
 Desktop MCP
@@ -257,7 +257,7 @@ Detect and report:
 
 ## Objective
 
-The Desktop MCP Tool Contract defines the stable interface between PostQode Agents and any Desktop Adapter implementation.
+The Desktop MCP Tool Contract defines the stable interface between Desktop Agents and any Desktop Adapter implementation.
 
 This contract ensures that:
 
@@ -584,7 +584,7 @@ The contract must support:
 | SAP GUI | SAP Adapter |
 | Oracle Forms | Oracle Adapter |
 
-without requiring changes to PostQode Agents.
+without requiring changes to Desktop Agents.
 
 ---
 

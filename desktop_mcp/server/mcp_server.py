@@ -89,6 +89,8 @@ class DesktopMCPServer:
             "wait_for_browser": self.wait_for_browser,
             "attach_browser_window": self.attach_browser_window,
             "generate_report": self.generate_report,
+            "click_at": self.click_at,
+            "restore_window": self.restore_window,
         }
 
     def call_tool(
@@ -215,6 +217,10 @@ class DesktopMCPServer:
         self.adapter.resize_window(self._required(payload, "window_id"), "minimized")
         return {}
 
+    def restore_window(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.adapter.resize_window(self._required(payload, "window_id"), "restored")
+        return {}
+
     def desktop_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
         windows = []
         for win in self.adapter.list_windows():
@@ -298,6 +304,12 @@ class DesktopMCPServer:
             "source_control_id": source,
             "target_control_id": target,
         }
+
+    def click_at(self, payload: dict[str, Any]) -> dict[str, Any]:
+        x = int(self._required(payload, "x"))
+        y = int(self._required(payload, "y"))
+        button = str(payload.get("button", "left"))
+        return self.adapter.click_at(x, y, button)
 
     def enter_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._interaction(
