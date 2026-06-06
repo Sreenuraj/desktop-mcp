@@ -964,6 +964,16 @@ class WindowsUIAutomationAdapter:
             except Exception:
                 del self._controls_cache[control_id]
 
+        def should_skip_window(win) -> bool:
+            try:
+                title = (win.window_text() or "").lower()
+                for pattern in ("visual studio code", " - cursor", "cmd.exe", "powershell.exe", "terminal"):
+                    if pattern in title:
+                        return True
+            except Exception:
+                pass
+            return False
+
         desktop = PyWinDesktop(backend="uia")
         active_handle = None
 
@@ -971,11 +981,12 @@ class WindowsUIAutomationAdapter:
         try:
             active_win = desktop.active()
             active_handle = active_win.handle
-            for desc in active_win.descendants():
-                desc_id = self._get_control_id(desc)
-                self._controls_cache[desc_id] = desc
-                if desc_id == control_id:
-                    return desc
+            if not should_skip_window(active_win):
+                for desc in active_win.descendants():
+                    desc_id = self._get_control_id(desc)
+                    self._controls_cache[desc_id] = desc
+                    if desc_id == control_id:
+                        return desc
         except Exception:
             pass
 
@@ -986,6 +997,8 @@ class WindowsUIAutomationAdapter:
                     continue
             except Exception:
                 pass
+            if should_skip_window(win):
+                continue
             try:
                 for desc in win.descendants():
                     desc_id = self._get_control_id(desc)
