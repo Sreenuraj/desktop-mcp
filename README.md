@@ -87,6 +87,38 @@ desktop-mcp
 
 The server reads JSON-RPC requests from stdin and writes JSON-RPC responses to stdout.
 
+
+---
+
+## Interaction Recorder (Codegen)
+
+The Desktop MCP includes a UIA-native interaction recorder (similar to Playwright's Codegen) that listens to global UIA events on Windows and logs your manual inputs. It uses stable UIA properties (automation IDs, names, types) instead of fragile screen coordinates.
+
+### Running the Recorder
+
+We provide automated setup and execution scripts that handle elevating privileges, creating/activating virtual environments, and installing all platform prerequisites automatically.
+
+#### Quick Run (Recommended)
+- **Windows (PowerShell/CMD)**: Double-click or run `run_recorder.bat` (or execute `.\run_recorder.ps1` in PowerShell). This script will:
+  1. Detect if it is running as Administrator (relaunching with elevated privileges if needed).
+  2. Create/update the `.venv` virtual environment.
+  3. Install all Windows and UIA-specific dependencies automatically.
+  4. Launch the interaction recorder.
+- **macOS / Linux**: Run `./run_recorder.sh`. This will prepare the virtual environment and launch the recorder in simulated/mock mode.
+
+#### Manual/Global Run (Windows)
+1. Open a command prompt or PowerShell window **as Administrator** (required to listen to focus events across administrative applications).
+2. Start the recorder:
+   ```bash
+   desktop-mcp-recorder
+   ```
+   *Alternatively, run `python examples/codegen_recorder.py`.*
+
+### UI and Console Fallback
+- **Floating UI Overlay**: On Windows, starting the recorder opens a dark-themed, always-on-top floating window showing a **● Recording** status. Your manual inputs (clicks, keypresses, text entries) will display there in real-time. Click **Copy Transcript** on the floating window to copy the recorded actions to your clipboard.
+- **Terminal Fallback**: If Tkinter is not installed on the system, the recorder will output a warning and automatically fall back to **Console-only Mode**. In this mode, actions continue to print to the terminal in real-time, and you can copy the transcript directly from the console output or press `Ctrl+C` to exit.
+- **Mock Mode**: On macOS or Linux, running the recorder will output an example interaction transcript in simulated mode for testing purposes.
+
 ---
 
 ## Configuring the Adapter
