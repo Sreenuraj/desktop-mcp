@@ -128,4 +128,3 @@ def test_restore_window():
 
     assert response["success"] is True
     assert response["data"] == {}
-

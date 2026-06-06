@@ -594,8 +594,7 @@ class WindowsUIAutomationAdapter:
                         header_items = [
                             d.element_info.name
                             for d in el.descendants()
-                            if d.element_info.control_type == "HeaderItem"
-                            and d.element_info.name
+                            if d.element_info.control_type == "HeaderItem" and d.element_info.name
                         ]
 
                     cell_el = None
@@ -659,8 +658,7 @@ class WindowsUIAutomationAdapter:
                 header_items = [
                     d.element_info.name
                     for d in el.descendants()
-                    if d.element_info.control_type == "HeaderItem"
-                    and d.element_info.name
+                    if d.element_info.control_type == "HeaderItem" and d.element_info.name
                 ]
 
             columns = header_items

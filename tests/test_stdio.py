@@ -40,7 +40,6 @@ def test_all_tools_have_defined_schemas():
         assert tool["inputSchema"]["type"] == "object"
 
 
-
 def test_tools_call_wraps_desktop_mcp_response_as_text_content():
     server = DesktopMCPServer()
     response = handle_request(

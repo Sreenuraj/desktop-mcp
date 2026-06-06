@@ -326,10 +326,11 @@ class DesktopMCPServer:
 
     def read_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
-            "value": self.adapter.get_control(
-                self._required(payload, "control_id")
-            ).value
-            or ""
+            "value": (
+                self.adapter.get_control(
+                    self._required(payload, "control_id")
+                ).value or ""
+            )
         }
 
     def select_dropdown(self, payload: dict[str, Any]) -> dict[str, Any]:

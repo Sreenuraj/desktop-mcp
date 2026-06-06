@@ -15,6 +15,7 @@ It supports a mock mode on non-Windows platforms to show expected behavior.
 import sys
 import time
 
+
 def run_windows_spike() -> None:
     print("Running technical spike on Windows...")
     try:
@@ -26,7 +27,7 @@ def run_windows_spike() -> None:
 
     # 1. Launch Application
     print("Step 1: Launching Notepad.exe...")
-    app = Application(backend="uia").start("notepad.exe")
+    _ = Application(backend="uia").start("notepad.exe")
     time.sleep(1.0)  # Allow Notepad to initialize
 
     # 2. Detect & Select Window
@@ -91,7 +92,7 @@ def run_mock_spike() -> None:
     time.sleep(0.2)
     print("Step 2: Simulating window discovery...")
     print(" - Found window: Title='Untitled - Notepad', HWND=56102, PID=8402")
-    
+
     print("Step 3: Simulating control tree traversal...")
     controls = [
         {"name": "File", "type": "MenuItem", "auto_id": "FileMenu"},
@@ -101,13 +102,13 @@ def run_mock_spike() -> None:
     ]
     for c in controls:
         print(f" - Control: Name='{c['name']}', Type='{c['type']}', AutoID='{c['auto_id']}'")
-        
+
     print("Step 4: Simulating text entry into 'Text Editor' Document control...")
     print(" - Action 'enter_text' value='Hello, Desktop MCP Agent Spike!' successful.")
-    
+
     print("Step 5: Simulating screenshot capture of window bounds (left=100, top=100, right=800, bottom=600)...")
     print(" - Screenshot artifact simulated: mock_notepad_screenshot.png")
-    
+
     print("Step 6: Simulating process cleanup...")
     print("Spike successfully completed in mock mode!")
 

@@ -319,11 +319,7 @@ class InMemoryDesktopAdapter:
     def attach_browser_window(self, title_contains: str | None = None) -> dict:
         browser_win_id = "win_browser_001"
         self.wait_for_browser()
-        if (
-            title_contains
-            and title_contains.lower()
-            not in self._windows[browser_win_id].title.lower()
-        ):
+        if title_contains and title_contains.lower() not in self._windows[browser_win_id].title.lower():
             raise WindowNotFoundError(
                 f"Browser window with title containing " f"'{title_contains}' not found"
             )
