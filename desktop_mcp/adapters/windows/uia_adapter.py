@@ -473,13 +473,11 @@ class WindowsUIAutomationAdapter:
         if not el.is_enabled():
             raise ControlDisabledError(f"Control is disabled: {control_id}")
 
-        # Auto-refocus the parent window before interacting — this
-        # prevents focus-loss issues when the AI agent runs inside
-        # an IDE (e.g. VSCode) that steals focus.
-        try:
-            el.top_level_parent().set_focus()
-        except Exception:
-            pass
+        def ensure_focus() -> None:
+            try:
+                el.top_level_parent().set_focus()
+            except Exception:
+                pass
 
         try:
             if action == "click":
@@ -487,26 +485,37 @@ class WindowsUIAutomationAdapter:
                     try:
                         el.invoke()
                     except Exception:
+                        ensure_focus()
                         el.click_input()
                 else:
+                    ensure_focus()
                     el.click_input()
             elif action == "double_click":
+                ensure_focus()
                 if hasattr(el, "double_click_input"):
                     el.double_click_input()
                 else:
                     el.click_input()
                     el.click_input()
             elif action == "right_click":
+                ensure_focus()
                 el.right_click_input()
             elif action == "hover":
+                ensure_focus()
                 el.move_mouse_input()
             elif action == "focus":
+                ensure_focus()
                 el.set_focus()
             elif action == "enter_text":
                 val = kwargs.get("value", "")
                 if hasattr(el, "set_edit_text"):
-                    el.set_edit_text(val)
+                    try:
+                        el.set_edit_text(val)
+                    except Exception:
+                        ensure_focus()
+                        el.type_keys(val, with_spaces=True, with_tabs=True)
                 else:
+                    ensure_focus()
                     el.type_keys(val, with_spaces=True, with_tabs=True)
             elif action == "append_text":
                 val = kwargs.get("value", "")
@@ -519,26 +528,50 @@ class WindowsUIAutomationAdapter:
                 except Exception:
                     pass
                 if hasattr(el, "set_edit_text"):
-                    el.set_edit_text(existing + val)
+                    try:
+                        el.set_edit_text(existing + val)
+                    except Exception:
+                        ensure_focus()
+                        el.type_keys(val, with_spaces=True, with_tabs=True)
                 else:
+                    ensure_focus()
                     el.type_keys(val, with_spaces=True, with_tabs=True)
             elif action == "clear_text":
                 if hasattr(el, "set_edit_text"):
-                    el.set_edit_text("")
+                    try:
+                        el.set_edit_text("")
+                    except Exception:
+                        ensure_focus()
+                        el.type_keys("^a{BACKSPACE}")
                 else:
+                    ensure_focus()
                     el.type_keys("^a{BACKSPACE}")
             elif action in ("select_dropdown", "select_tab", "select_radio", "check"):
                 val = str(kwargs.get("value", "true"))
                 if action == "check" and hasattr(el, "check"):
-                    el.check()
+                    try:
+                        el.check()
+                    except Exception:
+                        ensure_focus()
+                        el.click_input()
                 elif hasattr(el, "select"):
-                    el.select(val)
+                    try:
+                        el.select(val)
+                    except Exception:
+                        ensure_focus()
+                        el.click_input()
                 else:
+                    ensure_focus()
                     el.click_input()
             elif action == "uncheck":
                 if hasattr(el, "uncheck"):
-                    el.uncheck()
+                    try:
+                        el.uncheck()
+                    except Exception:
+                        ensure_focus()
+                        el.click_input()
                 else:
+                    ensure_focus()
                     el.click_input()
             elif action == "select_row":
                 row_index = int(kwargs.get("row_index", 0))
@@ -550,8 +583,13 @@ class WindowsUIAutomationAdapter:
                 if row_index < len(data_rows):
                     row_el = data_rows[row_index]
                     if hasattr(row_el, "select"):
-                        row_el.select()
+                        try:
+                            row_el.select()
+                        except Exception:
+                            ensure_focus()
+                            row_el.click_input()
                     else:
+                        ensure_focus()
                         row_el.click_input()
                 else:
                     raise ControlNotFoundError(
@@ -612,8 +650,14 @@ class WindowsUIAutomationAdapter:
 
                     if cell_el:
                         if hasattr(cell_el, "set_edit_text"):
-                            cell_el.set_edit_text(value)
+                            try:
+                                cell_el.set_edit_text(value)
+                            except Exception:
+                                ensure_focus()
+                                cell_el.click_input()
+                                cell_el.type_keys(value, with_spaces=True, with_tabs=True)
                         else:
+                            ensure_focus()
                             cell_el.click_input()
                             cell_el.type_keys(value, with_spaces=True, with_tabs=True)
                     else:
