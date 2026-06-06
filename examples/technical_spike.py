@@ -19,7 +19,7 @@ import time
 def run_windows_spike() -> None:
     print("Running technical spike on Windows...")
     try:
-        from pywinauto import Application, Desktop
+        from pywinauto import Application, Desktop  # type: ignore
         from PIL import ImageGrab
     except ImportError as exc:
         print(f"Error: Missing required Windows dependencies. Please install with 'pip install -e .[windows]'\nDetail: {exc}")

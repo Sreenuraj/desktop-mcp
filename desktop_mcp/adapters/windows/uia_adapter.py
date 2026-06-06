@@ -28,25 +28,25 @@ pywinauto_mouse: Any = None
 
 try:
     if sys.platform == "win32":
-        import psutil as psutil_mod
+        import psutil as psutil_mod  # type: ignore
 
         psutil = psutil_mod
-        import win32con as win32con_mod
+        import win32con as win32con_mod  # type: ignore
 
         win32con = win32con_mod
-        import win32gui as win32gui_mod
+        import win32gui as win32gui_mod  # type: ignore
 
         win32gui = win32gui_mod
         from PIL import ImageGrab as ImageGrab_mod
 
         ImageGrab = ImageGrab_mod
-        from pywinauto import Application as PyWinApplication_mod
+        from pywinauto import Application as PyWinApplication_mod  # type: ignore
 
         PyWinApplication = PyWinApplication_mod
-        from pywinauto import Desktop as PyWinDesktop_mod
+        from pywinauto import Desktop as PyWinDesktop_mod  # type: ignore
 
         PyWinDesktop = PyWinDesktop_mod
-        from pywinauto import mouse as pywinauto_mouse_mod
+        from pywinauto import mouse as pywinauto_mouse_mod  # type: ignore
 
         pywinauto_mouse = pywinauto_mouse_mod
 except ImportError:
