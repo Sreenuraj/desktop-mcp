@@ -31,9 +31,12 @@ class RecorderUI:
     def __init__(self):
         self.root = None
         self.text_area = None
+        self.line_num_area = None
+        self.scrollbar = None
         self.status_lbl = None
+        self.record_btn = None
         self.pause_btn = None
-        self.transcript = []
+        self.events = []
         self.paused = False
 
         self.setup_frame = None
@@ -42,6 +45,7 @@ class RecorderUI:
         self.target_app = None
         self.minimize_others = True
         self.on_recording_started_callback = None
+        self.target_format = None
 
     def start(self, on_close_callback, target_app=None, window_list=None, on_recording_started_callback=None) -> bool:
         if tk is None or scrolledtext is None or ttk is None:
@@ -50,7 +54,7 @@ class RecorderUI:
 
         self.root = tk.Tk()
         self.root.title("Desktop MCP - Action Recorder")
-        self.root.geometry("480x450")
+        self.root.geometry("520x500")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e2e")
         self.root.protocol("WM_DELETE_WINDOW", on_close_callback)
@@ -94,13 +98,21 @@ class RecorderUI:
         all_values = list(window_list)
 
         def on_keyrelease(event):
+            if event.keysym in ("Up", "Down", "Left", "Right", "Return", "Escape", "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R"):
+                return
             typed = self.combo.get()
             if not typed:
                 self.combo['values'] = all_values
             else:
                 filtered = [item for item in all_values if typed.lower() in item.lower()]
                 self.combo['values'] = filtered
+            try:
+                self.combo.post()
+            except Exception:
+                pass
+
         self.combo.bind('<KeyRelease>', on_keyrelease)
+        self.combo.bind('<FocusIn>', lambda e: self.combo.post())
 
         # Manual path section
         path_lbl = tk.Label(
@@ -187,7 +199,7 @@ class RecorderUI:
 
         # Header
         header = tk.Frame(self.recorder_frame, bg="#313244", pady=10)
-        header.pack(fill=tk.X)
+        header.pack(fill=tk.X, side=tk.TOP)
 
         self.status_lbl = tk.Label(
             header, text="● Recording", fg="#f38ba8", bg="#313244",
@@ -202,83 +214,314 @@ class RecorderUI:
         )
         subtitle.pack(side=tk.RIGHT, padx=15)
 
-        # Scrolled Text Box
-        self.text_area = scrolledtext.ScrolledText(
-            self.recorder_frame, wrap=tk.WORD, bg="#181825", fg="#cdd6f4",
+        # Toolbar Frame
+        toolbar = tk.Frame(self.recorder_frame, bg="#252538", pady=6)
+        toolbar.pack(fill=tk.X, side=tk.TOP)
+
+        # Record Button (Toggle)
+        self.record_btn = tk.Button(
+            toolbar, text="● Record", bg="#1e1e2e", fg="#f38ba8",
+            activebackground="#45475a", activeforeground="#f38ba8",
+            font=("Segoe UI", 9, "bold"), command=self.toggle_record,
+            bd=0, padx=10, pady=4, relief=tk.FLAT
+        )
+        self.record_btn.pack(side=tk.LEFT, padx=(10, 5))
+
+        # Pause Button
+        self.pause_btn = tk.Button(
+            toolbar, text="⏸ Pause", bg="#1e1e2e", fg="#f9e2af",
+            activebackground="#45475a", activeforeground="#f9e2af",
+            font=("Segoe UI", 9, "bold"), command=self.toggle_pause,
+            bd=0, padx=10, pady=4, relief=tk.FLAT
+        )
+        self.pause_btn.pack(side=tk.LEFT, padx=5)
+
+        # Copy Button
+        copy_btn = tk.Button(
+            toolbar, text="📋 Copy", bg="#1e1e2e", fg="#89b4fa",
+            activebackground="#45475a", activeforeground="#89b4fa",
+            font=("Segoe UI", 9, "bold"), command=self.copy_transcript,
+            bd=0, padx=10, pady=4, relief=tk.FLAT
+        )
+        copy_btn.pack(side=tk.LEFT, padx=5)
+
+        # Clear Button
+        clear_btn = tk.Button(
+            toolbar, text="🗑 Clear", bg="#1e1e2e", fg="#a6adc8",
+            activebackground="#45475a", activeforeground="#cdd6f4",
+            font=("Segoe UI", 9, "bold"), command=self.clear_transcript,
+            bd=0, padx=10, pady=4, relief=tk.FLAT
+        )
+        clear_btn.pack(side=tk.LEFT, padx=5)
+
+        # Target Format Selection on the right
+        format_lbl = tk.Label(
+            toolbar, text="Format:", fg="#a6adc8", bg="#252538",
+            font=("Segoe UI", 9)
+        )
+        format_lbl.pack(side=tk.RIGHT, padx=(5, 5))
+
+        self.target_format = tk.StringVar(value="Python (pywinauto)")
+        self.format_combo = ttk.Combobox(
+            toolbar, textvariable=self.target_format,
+            values=["Python (pywinauto)", "Desktop MCP Tools", "Action Log"],
+            width=18, font=("Segoe UI", 9), state="readonly"
+        )
+        self.format_combo.pack(side=tk.RIGHT, padx=(0, 10))
+        self.format_combo.bind("<<ComboboxSelected>>", lambda e: self.regenerate_display())
+
+        # Middle frame for Line numbers + Text Area + Scrollbar
+        middle_frame = tk.Frame(self.recorder_frame, bg="#181825")
+        middle_frame.pack(padx=12, pady=12, fill=tk.BOTH, expand=True, side=tk.TOP)
+
+        # Line numbers
+        self.line_num_area = tk.Text(
+            middle_frame, width=4, padx=5, bg="#11111b", fg="#585b70",
+            font=("Consolas", 10), state=tk.DISABLED, bd=0, highlightthickness=0
+        )
+        self.line_num_area.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Scrollbar
+        self.scrollbar = tk.Scrollbar(middle_frame, bg="#181825")
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Text Area (normal text widget, wrap=tk.NONE)
+        self.text_area = tk.Text(
+            middle_frame, wrap=tk.NONE, bg="#181825", fg="#cdd6f4",
             insertbackground="white", font=("Consolas", 10), bd=0,
             highlightthickness=0
         )
-        self.text_area.pack(padx=12, pady=12, fill=tk.BOTH, expand=True)
-        self.text_area.insert(tk.END, f"Recording started. target_app='{self.target_app or 'None'}'\n")
-        self.text_area.configure(state=tk.DISABLED)
+        self.text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Footer Button Panel
-        btn_frame = tk.Frame(self.recorder_frame, bg="#1e1e2e")
-        btn_frame.pack(fill=tk.X, pady=8)
+        # Sync scrolling
+        def on_scroll(*args):
+            self.text_area.yview(*args)
+            self.line_num_area.yview(*args)
 
-        copy_btn = tk.Button(
-            btn_frame, text="Copy Transcript", bg="#89b4fa", fg="#11111b",
-            activebackground="#b4befe", font=("Segoe UI", 9, "bold"),
-            command=self.copy_transcript, bd=0, padx=12, pady=6
-        )
-        copy_btn.pack(side=tk.LEFT, padx=15)
+        def on_text_scroll(*args):
+            self.scrollbar.set(*args)
+            self.line_num_area.yview_moveto(args[0])
 
-        self.pause_btn = tk.Button(
-            btn_frame, text="Pause", bg="#f9e2af", fg="#11111b",
-            activebackground="#b4befe", font=("Segoe UI", 9, "bold"),
-            command=self.toggle_pause, bd=0, padx=12, pady=6
-        )
-        self.pause_btn.pack(side=tk.LEFT, padx=15)
+        self.scrollbar.config(command=on_scroll)
+        self.text_area.config(yscrollcommand=on_text_scroll)
 
-        clear_btn = tk.Button(
-            btn_frame, text="Clear Logs", bg="#45475a", fg="#cdd6f4",
-            activebackground="#585b70", font=("Segoe UI", 9),
-            command=self.clear_transcript, bd=0, padx=12, pady=6
-        )
-        clear_btn.pack(side=tk.RIGHT, padx=15)
+        # Bind MouseWheel so it scrolls both synchronously
+        def on_mouse_wheel(event):
+            delta = event.delta
+            if sys.platform == "darwin":
+                self.text_area.yview_scroll(-int(delta), "units")
+                self.line_num_area.yview_scroll(-int(delta), "units")
+            else:
+                self.text_area.yview_scroll(-int(delta/120), "units")
+                self.line_num_area.yview_scroll(-int(delta/120), "units")
+            return "break"
+
+        self.text_area.bind("<MouseWheel>", on_mouse_wheel)
+        self.line_num_area.bind("<MouseWheel>", on_mouse_wheel)
+
+        self.events = [{"type": "system", "text": f"Recording started. target_app='{self.target_app or 'None'}'"}]
+        self.regenerate_display()
+
+    def toggle_record(self) -> None:
+        self.paused = not self.paused
+        self.update_states()
 
     def toggle_pause(self) -> None:
         self.paused = not self.paused
+        self.update_states()
+
+    def update_states(self) -> None:
         if self.paused:
+            if self.record_btn:
+                self.record_btn.configure(text="○ Record", fg="#a6adc8")
             if self.pause_btn:
-                self.pause_btn.configure(text="Resume", bg="#a6e3a1")
+                self.pause_btn.configure(text="▶ Resume", fg="#a6e3a1")
             if self.status_lbl:
                 self.status_lbl.configure(text="Paused", fg="#f9e2af")
-            self.log_action("[System] Recording Paused.")
+            self.log_event({"type": "system", "text": "Recording Paused."})
         else:
+            if self.record_btn:
+                self.record_btn.configure(text="● Record", fg="#f38ba8")
             if self.pause_btn:
-                self.pause_btn.configure(text="Pause", bg="#f9e2af")
+                self.pause_btn.configure(text="⏸ Pause", fg="#f9e2af")
             if self.status_lbl:
                 self.status_lbl.configure(text="● Recording", fg="#f38ba8")
-            self.log_action("[System] Recording Resumed.")
+            self.log_event({"type": "system", "text": "Recording Resumed."})
 
     def log_action(self, text: str) -> None:
-        print(text)  # Also print to terminal stdout
-        if not self.root or not self.text_area:
+        # Compatibility fallback
+        self.log_event({"type": "system", "text": text})
+
+    def log_event(self, event_dict: dict) -> None:
+        # Also print Action Log format to console stdout
+        print(self.format_single_event(event_dict, "Action Log"), end="")
+
+        if not self.root:
+            self.events.append(event_dict)
             return
 
         def _update():
-            self.transcript.append(text)
-            self.text_area.configure(state=tk.NORMAL)
-            self.text_area.insert(tk.END, text + "\n")
-            self.text_area.see(tk.END)
-            self.text_area.configure(state=tk.DISABLED)
+            self.events.append(event_dict)
+            self.regenerate_display()
 
         self.root.after(0, _update)
 
-    def copy_transcript(self) -> None:
-        if not self.root:
+    def format_single_event(self, ev: dict, fmt: str) -> str:
+        if fmt == "Action Log":
+            if ev["type"] == "system":
+                return f"{ev['text']}\n"
+            elif ev["type"] == "focus_shift":
+                return f"\n[Window] Focus shifted to: '{ev['win_title']}' (HWND: {ev['win_handle']})\n"
+            elif ev["type"] == "click":
+                return f"  -> Clicked {ev['control_type']}: '{ev['name']}' (auto_id='{ev['auto_id']}')\n"
+            elif ev["type"] == "checkbox":
+                return f"  -> CheckBox: '{ev['name']}' (auto_id='{ev['auto_id']}') -> {ev['state']}\n"
+            elif ev["type"] == "input":
+                return f"  -> Input Text: '{ev['text']}' into {ev['control_type']} '{ev['name']}' (auto_id='{ev['auto_id']}')\n"
+            elif ev["type"] == "combobox":
+                return f"  -> ComboBox: '{ev['name']}' (auto_id='{ev['auto_id']}') selection: '{ev['value']}'\n"
+
+        elif fmt == "Python (pywinauto)":
+            if ev["type"] == "system":
+                return f"# {ev['text']}\n"
+            elif ev["type"] == "focus_shift":
+                title = ev["win_title"]
+                return f"\n# Focus shifted to: {title}\nwin = app.window(title=\"{title}\")\nwin.set_focus()\n"
+            elif ev["type"] == "click":
+                ctrl_type = ev["control_type"]
+                name = ev["name"]
+                auto_id = ev["auto_id"]
+                selector = []
+                if auto_id:
+                    selector.append(f'auto_id="{auto_id}"')
+                if name:
+                    selector.append(f'title="{name}"')
+                selector.append(f'control_type="{ctrl_type}"')
+                sel_str = ", ".join(selector)
+                return f'win.child_window({sel_str}).click()\n'
+            elif ev["type"] == "checkbox":
+                name = ev["name"]
+                auto_id = ev["auto_id"]
+                state = ev["state"]
+                selector = []
+                if auto_id:
+                    selector.append(f'auto_id="{auto_id}"')
+                if name:
+                    selector.append(f'title="{name}"')
+                selector.append('control_type="CheckBox"')
+                sel_str = ", ".join(selector)
+                if state == "Checked":
+                    return f'win.child_window({sel_str}).check()\n'
+                elif state == "Unchecked":
+                    return f'win.child_window({sel_str}).uncheck()\n'
+                else:
+                    return f'win.child_window({sel_str}).click()\n'
+            elif ev["type"] == "input":
+                ctrl_type = ev["control_type"]
+                name = ev["name"]
+                auto_id = ev["auto_id"]
+                text = ev["text"]
+                selector = []
+                if auto_id:
+                    selector.append(f'auto_id="{auto_id}"')
+                if name:
+                    selector.append(f'title="{name}"')
+                selector.append(f'control_type="{ctrl_type}"')
+                sel_str = ", ".join(selector)
+                return f'win.child_window({sel_str}).set_edit_text("{text}")\n'
+            elif ev["type"] == "combobox":
+                name = ev["name"]
+                auto_id = ev["auto_id"]
+                val = ev["value"]
+                selector = []
+                if auto_id:
+                    selector.append(f'auto_id="{auto_id}"')
+                if name:
+                    selector.append(f'title="{name}"')
+                selector.append('control_type="ComboBox"')
+                sel_str = ", ".join(selector)
+                return f'win.child_window({sel_str}).select("{val}")\n'
+
+        elif fmt == "Desktop MCP Tools":
+            if ev["type"] == "system":
+                return ""
+            elif ev["type"] == "focus_shift":
+                title = ev["win_title"]
+                return f'{{"tool": "activate_window", "arguments": {{"window_id": "{title}"}}}}'
+            elif ev["type"] == "click":
+                auto_id = ev["auto_id"] or ev["name"]
+                return f'{{"tool": "click", "arguments": {{"control_id": "{auto_id}"}}}}'
+            elif ev["type"] == "checkbox":
+                auto_id = ev["auto_id"] or ev["name"]
+                return f'{{"tool": "click", "arguments": {{"control_id": "{auto_id}"}}}}'
+            elif ev["type"] == "input":
+                auto_id = ev["auto_id"] or ev["name"]
+                text = ev["text"]
+                return f'{{"tool": "enter_text", "arguments": {{"control_id": "{auto_id}", "text": "{text}"}}}}'
+            elif ev["type"] == "combobox":
+                auto_id = ev["auto_id"] or ev["name"]
+                return f'{{"tool": "click", "arguments": {{"control_id": "{auto_id}"}}}}'
+
+        return ""
+
+    def regenerate_display(self) -> None:
+        if not self.text_area:
             return
-        content = "\n".join(self.transcript)
+
+        fmt = self.target_format.get()
+        content = ""
+
+        if fmt == "Python (pywinauto)":
+            content += "#!/usr/bin/env python3\n"
+            content += "from pywinauto import Application\n"
+            content += "import time\n\n"
+            if self.target_app:
+                content += f"app = Application(backend=\"uia\").connect(title=\"{self.target_app}\")\n"
+            else:
+                content += "app = Application(backend=\"uia\").start(\"calc.exe\")  # Fallback launch\n"
+            for ev in self.events:
+                content += self.format_single_event(ev, fmt)
+        elif fmt == "Desktop MCP Tools":
+            tool_lines = []
+            for ev in self.events:
+                line = self.format_single_event(ev, fmt)
+                if line:
+                    tool_lines.append(line)
+            content += "[\n"
+            content += ",\n".join(f"  {line}" for line in tool_lines)
+            content += "\n]"
+        else:
+            for ev in self.events:
+                content += self.format_single_event(ev, fmt)
+
+        self.text_area.configure(state=tk.NORMAL)
+        self.text_area.delete("1.0", tk.END)
+        self.text_area.insert(tk.END, content)
+        self.text_area.see(tk.END)
+        self.text_area.configure(state=tk.DISABLED)
+
+        self.update_line_numbers()
+
+    def update_line_numbers(self) -> None:
+        if not self.line_num_area or not self.text_area:
+            return
+        self.line_num_area.configure(state=tk.NORMAL)
+        self.line_num_area.delete("1.0", tk.END)
+        num_lines = int(self.text_area.index('end-1c').split('.')[0])
+        line_nums_str = "\n".join(str(i) for i in range(1, num_lines + 1))
+        self.line_num_area.insert("1.0", line_nums_str)
+        self.line_num_area.configure(state=tk.DISABLED)
+
+    def copy_transcript(self) -> None:
+        if not self.root or not self.text_area:
+            return
+        content = self.text_area.get("1.0", tk.END).strip()
         self.root.clipboard_clear()
         self.root.clipboard_append(content)
 
     def clear_transcript(self) -> None:
-        self.transcript.clear()
-        if self.text_area:
-            self.text_area.configure(state=tk.NORMAL)
-            self.text_area.delete("1.0", tk.END)
-            self.text_area.configure(state=tk.DISABLED)
+        self.events = [{"type": "system", "text": "Logs cleared."}]
+        self.regenerate_display()
 
 
 def run_windows_recorder(target_app: str = None) -> None:
@@ -331,6 +574,7 @@ def run_windows_recorder(target_app: str = None) -> None:
 
     uia_instance = IUIA()
     desktop_instance = Desktop(backend="uia")
+    target_hwnd = None
     last_runtime_id = None
     last_window_handle = None
     text_buffer = {}
@@ -397,23 +641,53 @@ def run_windows_recorder(target_app: str = None) -> None:
                                 should_ignore = True
                                 break
 
-                        if not should_ignore:
-                            if win_handle != last_window_handle:
-                                last_window_handle = win_handle
-                                ui.log_action(f"\n[Window] Focus shifted to: '{win_title}' (HWND: {win_handle})")
+                        # Target check
+                        is_target = False
+                        if not ui.target_app:
+                            is_target = True
+                        else:
+                            if target_hwnd and win_handle == target_hwnd:
+                                is_target = True
+                            elif win_title and ui.target_app.lower() in win_title.lower():
+                                is_target = True
 
+                        if win_handle != last_window_handle:
+                            last_window_handle = win_handle
+                            if not should_ignore and is_target:
+                                ui.log_event({
+                                    "type": "focus_shift",
+                                    "win_title": win_title,
+                                    "win_handle": win_handle
+                                })
+
+                        if not should_ignore and is_target:
                             if click_control_type == "Button":
-                                ui.log_action(f"  -> Clicked Button: '{click_name}' (auto_id='{click_auto_id}')")
+                                ui.log_event({
+                                    "type": "click",
+                                    "control_type": "Button",
+                                    "name": click_name,
+                                    "auto_id": click_auto_id
+                                })
                                 clicked_el_logged = True
                             elif click_control_type == "MenuItem":
-                                ui.log_action(f"  -> Selected Menu Item: '{click_name}' (auto_id='{click_auto_id}')")
+                                ui.log_event({
+                                    "type": "click",
+                                    "control_type": "MenuItem",
+                                    "name": click_name,
+                                    "auto_id": click_auto_id
+                                })
                                 clicked_el_logged = True
                             elif click_control_type == "CheckBox":
                                 try:
                                     state = "Checked" if raw_click_el.is_checked() else "Unchecked"
                                 except Exception:
                                     state = "Toggled"
-                                ui.log_action(f"  -> CheckBox: '{click_name}' (auto_id='{click_auto_id}') -> {state}")
+                                ui.log_event({
+                                    "type": "checkbox",
+                                    "name": click_name,
+                                    "auto_id": click_auto_id,
+                                    "state": state
+                                })
                                 clicked_el_logged = True
                             elif click_control_type in ("Edit", "Document"):
                                 # Let standard focus loop handle text box typing/buffering
@@ -423,11 +697,21 @@ def run_windows_recorder(target_app: str = None) -> None:
                                     val = raw_click_el.get_value() or ""
                                 except Exception:
                                     val = ""
-                                ui.log_action(f"  -> ComboBox: '{click_name}' (auto_id='{click_auto_id}') selection: '{val}'")
+                                ui.log_event({
+                                    "type": "combobox",
+                                    "name": click_name,
+                                    "auto_id": click_auto_id,
+                                    "value": val
+                                })
                                 clicked_el_logged = True
                             else:
                                 if click_name or click_auto_id:
-                                    ui.log_action(f"  -> Clicked Element: {click_control_type} '{click_name}' (auto_id='{click_auto_id}')")
+                                    ui.log_event({
+                                        "type": "click",
+                                        "control_type": click_control_type,
+                                        "name": click_name,
+                                        "auto_id": click_auto_id
+                                    })
                                     clicked_el_logged = True
 
                             if clicked_el_logged:
@@ -460,56 +744,102 @@ def run_windows_recorder(target_app: str = None) -> None:
                         should_ignore = True
                         break
 
-                if should_ignore:
-                    continue
+                # Target check
+                is_target = False
+                if not ui.target_app:
+                    is_target = True
+                else:
+                    if target_hwnd and win_handle == target_hwnd:
+                        is_target = True
+                    elif win_title and ui.target_app.lower() in win_title.lower():
+                        is_target = True
 
-                if win_handle != last_window_handle:
-                    last_window_handle = win_handle
-                    ui.log_action(f"\n[Window] Focus shifted to: '{win_title}' (HWND: {win_handle})")
-
+                # Flush input text buffer immediately when focus shifts to another element
                 if runtime_id != last_runtime_id:
                     if last_runtime_id in text_buffer:
                         edit_info = text_buffer.pop(last_runtime_id)
                         try:
                             val = edit_info["el"].get_value() or ""
                             if val:
-                                ui.log_action(f"  -> Input Text: '{val}' into {edit_info['type']} '{edit_info['name']}' (auto_id='{edit_info['auto_id']}')")
+                                ui.log_event({
+                                    "type": "input",
+                                    "control_type": edit_info["type"],
+                                    "name": edit_info["name"],
+                                    "auto_id": edit_info["auto_id"],
+                                    "text": val
+                                })
                         except Exception:
                             pass
-
                     last_runtime_id = runtime_id
 
-                    if not clicked_el_logged:
-                        name = info.name or ""
-                        control_type = info.control_type or ""
-                        auto_id = info.automation_id or ""
+                    # Only capture focus and inputs if target
+                    if not should_ignore and is_target:
+                        if not clicked_el_logged:
+                            name = info.name or ""
+                            control_type = info.control_type or ""
+                            auto_id = info.automation_id or ""
 
-                        if control_type == "Button":
-                            ui.log_action(f"  -> Clicked Button: '{name}' (auto_id='{auto_id}')")
-                        elif control_type == "MenuItem":
-                            ui.log_action(f"  -> Selected Menu Item: '{name}' (auto_id='{auto_id}')")
-                        elif control_type == "CheckBox":
-                            try:
-                                state = "Checked" if el.is_checked() else "Unchecked"
-                            except Exception:
-                                state = "Toggled"
-                            ui.log_action(f"  -> CheckBox: '{name}' (auto_id='{auto_id}') -> {state}")
-                        elif control_type in ("Edit", "Document"):
-                            text_buffer[runtime_id] = {
-                                "el": el,
-                                "name": name,
-                                "type": control_type,
-                                "auto_id": auto_id
-                            }
-                        elif control_type == "ComboBox":
-                            try:
-                                val = el.get_value() or ""
-                            except Exception:
-                                val = ""
-                            ui.log_action(f"  -> ComboBox: '{name}' (auto_id='{auto_id}') selection: '{val}'")
-                        else:
-                            if name or auto_id:
-                                ui.log_action(f"  -> Focused Element: {control_type} '{name}' (auto_id='{auto_id}')")
+                            if control_type == "Button":
+                                ui.log_event({
+                                    "type": "click",
+                                    "control_type": "Button",
+                                    "name": name,
+                                    "auto_id": auto_id
+                                })
+                            elif control_type == "MenuItem":
+                                ui.log_event({
+                                    "type": "click",
+                                    "control_type": "MenuItem",
+                                    "name": name,
+                                    "auto_id": auto_id
+                                })
+                            elif control_type == "CheckBox":
+                                try:
+                                    state = "Checked" if el.is_checked() else "Unchecked"
+                                except Exception:
+                                    state = "Toggled"
+                                ui.log_event({
+                                    "type": "checkbox",
+                                    "name": name,
+                                    "auto_id": auto_id,
+                                    "state": state
+                                })
+                            elif control_type in ("Edit", "Document"):
+                                text_buffer[runtime_id] = {
+                                    "el": el,
+                                    "name": name,
+                                    "type": control_type,
+                                    "auto_id": auto_id
+                                }
+                            elif control_type == "ComboBox":
+                                try:
+                                    val = el.get_value() or ""
+                                except Exception:
+                                    val = ""
+                                ui.log_event({
+                                    "type": "combobox",
+                                    "name": name,
+                                    "auto_id": auto_id,
+                                    "value": val
+                                })
+                            else:
+                                if name or auto_id:
+                                    ui.log_event({
+                                        "type": "click",
+                                        "control_type": control_type,
+                                        "name": name,
+                                        "auto_id": auto_id
+                                    })
+
+                if win_handle != last_window_handle:
+                    last_window_handle = win_handle
+                    if not should_ignore and is_target:
+                        ui.log_event({
+                            "type": "focus_shift",
+                            "win_title": win_title,
+                            "win_handle": win_handle
+                        })
+
             except Exception:
                 pass
 
@@ -518,18 +848,24 @@ def run_windows_recorder(target_app: str = None) -> None:
     record_thread.start()
 
     def setup_target_application(app_name: str, minimize_others: bool = True) -> None:
+        nonlocal target_hwnd
         try:
             import time
             import subprocess
+            import os
 
             # Wait briefly for Tkinter window to initialize
             time.sleep(0.5)
 
+            # Try to get clean name if it is a path
+            clean_name = os.path.basename(app_name)
+            if clean_name.lower().endswith(".exe"):
+                clean_name = clean_name[:-4]
+
             # Find the target window
-            target_hwnd = None
             for win in Desktop.windows():
                 title = win.window_text()
-                if title and app_name.lower() in title.lower():
+                if title and (app_name.lower() in title.lower() or clean_name.lower() in title.lower()):
                     target_hwnd = win.handle
                     break
 
@@ -548,7 +884,7 @@ def run_windows_recorder(target_app: str = None) -> None:
                         time.sleep(0.1)
                         for win in Desktop.windows():
                             title = win.window_text()
-                            if title and app_name.lower() in title.lower():
+                            if title and (app_name.lower() in title.lower() or clean_name.lower() in title.lower()):
                                 target_hwnd = win.handle
                                 break
                         if target_hwnd:
@@ -601,6 +937,22 @@ def run_windows_recorder(target_app: str = None) -> None:
                 title = win.window_text()
                 if title:
                     titles.append(title)
+
+            # Supplement with win32gui to ensure all visible windows are listed
+            try:
+                import win32gui
+
+                def enum_visible_cb(hwnd, extra):
+                    if win32gui.IsWindowVisible(hwnd):
+                        title = win32gui.GetWindowText(hwnd)
+                        if title and title not in IGNORE_WINDOW_PATTERNS:
+                            titles.append(title)
+                    return True
+
+                win32gui.EnumWindows(enum_visible_cb, None)
+            except Exception:
+                pass
+
             return sorted(list(set(titles)))
         except Exception:
             return []
@@ -612,7 +964,13 @@ def run_windows_recorder(target_app: str = None) -> None:
             try:
                 val = edit_info["el"].get_value() or ""
                 if val:
-                    print(f"  -> Input Text: '{val}' into {edit_info['type']} '{edit_info['name']}' (auto_id='{edit_info['auto_id']}')")
+                    ui.log_event({
+                        "type": "input",
+                        "control_type": edit_info["type"],
+                        "name": edit_info["name"],
+                        "auto_id": edit_info["auto_id"],
+                        "text": val
+                    })
             except Exception:
                 pass
         if ui.root:
@@ -698,22 +1056,22 @@ def run_mock_recorder() -> None:
 
         def mock_generator():
             mock_events = [
-                "[Window] Focus shifted to: 'Calculator'",
-                "  -> Clicked Button: 'Clear' (auto_id='clearButton')",
-                "  -> Clicked Button: 'Five' (auto_id='num5Button')",
-                "  -> Clicked Button: 'Multiply' (auto_id='multiplyButton')",
-                "  -> Clicked Button: 'Nine' (auto_id='num9Button')",
-                "  -> Clicked Button: 'Equals' (auto_id='equalButton')",
-                "\n[Window] Focus shifted to: 'Untitled - Notepad'",
-                "  -> Input Text: 'Hello DHCS' into Document 'Text Editor' (auto_id='15')",
-                "  -> Selected Menu Item: 'Exit' (auto_id='Exit')"
+                {"type": "focus_shift", "win_title": "Calculator", "win_handle": 2098032},
+                {"type": "click", "control_type": "Button", "name": "Clear", "auto_id": "clearButton"},
+                {"type": "click", "control_type": "Button", "name": "Five", "auto_id": "num5Button"},
+                {"type": "click", "control_type": "Button", "name": "Multiply", "auto_id": "multiplyButton"},
+                {"type": "click", "control_type": "Button", "name": "Nine", "auto_id": "num9Button"},
+                {"type": "click", "control_type": "Button", "name": "Equals", "auto_id": "equalButton"},
+                {"type": "focus_shift", "win_title": "Untitled - Notepad", "win_handle": 1234567},
+                {"type": "input", "control_type": "Document", "name": "Text Editor", "auto_id": "15", "text": "Hello DHCS"},
+                {"type": "click", "control_type": "MenuItem", "name": "Exit", "auto_id": "Exit"}
             ]
             for ev in mock_events:
                 if stop_event.is_set():
                     break
                 time.sleep(1.5)
                 if not ui.paused:
-                    ui.log_action(ev)
+                    ui.log_event(ev)
 
         gen_thread = threading.Thread(target=mock_generator, daemon=True)
         gen_thread.start()
@@ -727,9 +1085,9 @@ def run_mock_recorder() -> None:
     if not started:
         print("Mock Console Recording active. Outputting example logs...")
         time.sleep(1)
-        print("[Window] Focus shifted to: 'Calculator'")
-        print("  -> Clicked Button: 'Clear' (auto_id='clearButton')")
-        print("  -> Clicked Button: 'Five' (auto_id='num5Button')")
+        ui.log_event({"type": "focus_shift", "win_title": "Calculator", "win_handle": 2098032})
+        ui.log_event({"type": "click", "control_type": "Button", "name": "Clear", "auto_id": "clearButton"})
+        ui.log_event({"type": "click", "control_type": "Button", "name": "Five", "auto_id": "num5Button"})
         print("====================================================")
 
 
