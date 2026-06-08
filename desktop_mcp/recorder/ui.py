@@ -20,7 +20,6 @@ class RecorderUI:
         self.status_lbl = None
         self.record_btn = None
         self.pause_btn = None
-        self.stop_btn = None
         self.events = []
         self._events_lock = threading.Lock()
         self.paused = False
@@ -49,7 +48,7 @@ class RecorderUI:
 
         self.root = tk.Tk()
         self.root.title("Desktop MCP - Action Recorder")
-        self.root.geometry("720x500")
+        self.root.geometry("850x550")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e2e")
         self.root.protocol("WM_DELETE_WINDOW", on_close_callback)
@@ -249,11 +248,11 @@ class RecorderUI:
         toolbar = tk.Frame(self.recorder_frame, bg="#252538", pady=6)
         toolbar.pack(fill=tk.X, side=tk.TOP)
 
-        # Record Button (Toggle)
+        # Record/Stop Button (Toggle)
         self.record_btn = tk.Button(
-            toolbar, text="● Record", bg="#1e1e2e", fg="#f38ba8",
+            toolbar, text="⏹ Stop", bg="#1e1e2e", fg="#f38ba8",
             activebackground="#45475a", activeforeground="#f38ba8",
-            font=("Segoe UI", 9, "bold"), command=self.toggle_record,
+            font=("Segoe UI", 9, "bold"), command=self.toggle_record_stop,
             bd=0, padx=10, pady=4, relief=tk.FLAT
         )
         self.record_btn.pack(side=tk.LEFT, padx=(10, 5))
@@ -266,15 +265,6 @@ class RecorderUI:
             bd=0, padx=10, pady=4, relief=tk.FLAT
         )
         self.pause_btn.pack(side=tk.LEFT, padx=5)
-
-        # Stop Button
-        self.stop_btn = tk.Button(
-            toolbar, text="⏹ Stop", bg="#1e1e2e", fg="#f38ba8",
-            activebackground="#45475a", activeforeground="#f38ba8",
-            font=("Segoe UI", 9, "bold"), command=self.stop_recording,
-            bd=0, padx=10, pady=4, relief=tk.FLAT
-        )
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
 
         # Copy Button
         copy_btn = tk.Button(
@@ -294,21 +284,24 @@ class RecorderUI:
         )
         clear_btn.pack(side=tk.LEFT, padx=5)
 
-        # Target Format Selection on the right (Combobox packed first puts it on the far right, Label packed second puts it to the left of the Combobox)
+        # Target Format Selection on the right (packaged in subframe for left-to-right alignment)
         self.target_format = tk.StringVar(value="Python (pywinauto)")
+        format_frame = tk.Frame(toolbar, bg="#252538")
+        format_frame.pack(side=tk.RIGHT, padx=(0, 10))
+
+        format_lbl = tk.Label(
+            format_frame, text="Format:", fg="#a6adc8", bg="#252538",
+            font=("Segoe UI", 9)
+        )
+        format_lbl.pack(side=tk.LEFT, padx=(5, 5))
+
         self.format_combo = ttk.Combobox(
-            toolbar, textvariable=self.target_format,
+            format_frame, textvariable=self.target_format,
             values=["Python (pywinauto)", "Desktop MCP Tools", "Action Log"],
             width=18, font=("Segoe UI", 9), state="readonly"
         )
-        self.format_combo.pack(side=tk.RIGHT, padx=(0, 10))
+        self.format_combo.pack(side=tk.LEFT, padx=(0, 5))
         self.format_combo.bind("<<ComboboxSelected>>", lambda e: self._on_format_change())
-
-        format_lbl = tk.Label(
-            toolbar, text="Format:", fg="#a6adc8", bg="#252538",
-            font=("Segoe UI", 9)
-        )
-        format_lbl.pack(side=tk.RIGHT, padx=(5, 5))
 
         # Middle frame for Line numbers + Text Area + Scrollbar
         middle_frame = tk.Frame(self.recorder_frame, bg="#181825")
@@ -365,11 +358,13 @@ class RecorderUI:
         self.regenerate_display()
         self.update_states()
 
-    def toggle_record(self) -> None:
+    def toggle_record_stop(self) -> None:
         if self.recording_state == "stopped":
             self.recording_state = "recording"
             self.log_event({"type": "system", "text": "Recording Resumed."})
             self.update_states()
+        else:
+            self.stop_recording()
 
     def toggle_pause(self) -> None:
         if self.recording_state == "recording":
@@ -408,22 +403,18 @@ class RecorderUI:
         if self.recording_state == "recording":
             self.paused = False
             if self.record_btn:
-                self.record_btn.configure(text="● Record", fg="#45475a", state=tk.DISABLED)
+                self.record_btn.configure(text="⏹ Stop", fg="#f38ba8", state=tk.NORMAL)
             if self.pause_btn:
                 self.pause_btn.configure(text="⏸ Pause", fg="#f9e2af", state=tk.NORMAL)
-            if self.stop_btn:
-                self.stop_btn.configure(text="⏹ Stop", fg="#f38ba8", state=tk.NORMAL)
             if self.status_lbl:
                 self.status_lbl.configure(text="● Recording", fg="#f38ba8")
 
         elif self.recording_state == "paused":
             self.paused = True
             if self.record_btn:
-                self.record_btn.configure(text="● Record", fg="#45475a", state=tk.DISABLED)
+                self.record_btn.configure(text="⏹ Stop", fg="#f38ba8", state=tk.NORMAL)
             if self.pause_btn:
                 self.pause_btn.configure(text="▶ Resume", fg="#a6e3a1", state=tk.NORMAL)
-            if self.stop_btn:
-                self.stop_btn.configure(text="⏹ Stop", fg="#f38ba8", state=tk.NORMAL)
             if self.status_lbl:
                 self.status_lbl.configure(text="Paused", fg="#f9e2af")
 
@@ -433,8 +424,6 @@ class RecorderUI:
                 self.record_btn.configure(text="● Record", fg="#a6e3a1", state=tk.NORMAL)
             if self.pause_btn:
                 self.pause_btn.configure(text="⏸ Pause", fg="#45475a", state=tk.DISABLED)
-            if self.stop_btn:
-                self.stop_btn.configure(text="⏹ Stop", fg="#45475a", state=tk.DISABLED)
             if self.status_lbl:
                 self.status_lbl.configure(text="Stopped", fg="#a6adc8")
 

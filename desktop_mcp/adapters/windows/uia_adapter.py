@@ -373,22 +373,29 @@ class WindowsUIAutomationAdapter:
             # Recursively build hierarchical controls starting from immediate children
             controls: list[Control] = []
             try:
-                for child in win_wrapper.children():
-                    controls.extend(self._build_control_tree(child))
+                children = win_wrapper.children()
             except Exception:
-                pass
+                children = []
+
+            for child in children:
+                try:
+                    controls.extend(self._build_control_tree(child))
+                except Exception:
+                    pass
 
             # If children() returned nothing, try descendants() as fallback
             if not controls:
                 try:
-                    for desc in win_wrapper.descendants():
-                        try:
-                            if self._should_include_control(desc):
-                                controls.append(self._map_control(desc))
-                        except Exception:
-                            continue
+                    descendants = win_wrapper.descendants()
                 except Exception:
-                    pass
+                    descendants = []
+
+                for desc in descendants:
+                    try:
+                        if self._should_include_control(desc):
+                            controls.append(self._map_control(desc))
+                    except Exception:
+                        continue
 
             return Window(
                 window_id=window_id,
@@ -458,12 +465,17 @@ class WindowsUIAutomationAdapter:
 
         child_controls = []
         try:
-            for child in element.children():
+            children = element.children()
+        except Exception:
+            children = []
+
+        for child in children:
+            try:
                 child_controls.extend(
                     self._build_control_tree(child, current_depth + 1, max_depth)
                 )
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         if include:
             control = self._map_control(element)
@@ -1083,8 +1095,8 @@ class WindowsUIAutomationAdapter:
         try:
             desktop = PyWinDesktop(backend="uia")
             win = desktop.window(handle=handle)
-            _ = win.window_text()
-            return win
+            # Resolve to a wrapper object immediately
+            return win.wrapper_object()
         except Exception:
             pass
 
@@ -1092,8 +1104,8 @@ class WindowsUIAutomationAdapter:
         try:
             app = PyWinApplication(backend="uia").connect(handle=handle)
             win = app.window(handle=handle)
-            _ = win.window_text()
-            return win
+            # Resolve to a wrapper object immediately
+            return win.wrapper_object()
         except Exception as exc:
             raise WindowNotFoundError(f"Window not found: {window_id}") from exc
 
