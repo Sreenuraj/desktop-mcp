@@ -410,11 +410,10 @@ class WindowsUIAutomationAdapter:
         if current_depth > max_depth:
             return []
 
-        try:
-            if not element.is_visible():
-                return []
-        except Exception:
-            pass
+        # Do not discard elements based on is_visible() here.
+        # If the target window is inactive or partially covered by VS Code (e.g. during manual approvals),
+        # elements may report as not visible. Removing this check ensures we still extract and allow
+        # interaction with them.
 
         include = self._should_include_control(element)
 
@@ -1021,21 +1020,21 @@ class WindowsUIAutomationAdapter:
         except (ValueError, IndexError) as exc:
             raise WindowNotFoundError(f"Invalid window ID: {window_id}") from exc
 
-        # Use Application.connect(handle=...) so that the returned wrapper
-        # is bound to the real process and can fully traverse the UIA tree.
-        # This fixes empty control trees for UWP apps and modern Windows apps.
+        # Try Desktop-based resolution first. This is highly reliable for UWP/modern apps
+        # (like Calculator, Settings, etc.) because it is not restricted to a single process,
+        # allowing full UIA tree traversal across process boundaries.
         try:
-            app = PyWinApplication(backend="uia").connect(handle=handle)
-            win = app.window(handle=handle)
+            desktop = PyWinDesktop(backend="uia")
+            win = desktop.window(handle=handle)
             _ = win.window_text()
             return win
         except Exception:
             pass
 
-        # Fallback to Desktop-based resolution
+        # Fallback to process-specific Application object
         try:
-            desktop = PyWinDesktop(backend="uia")
-            win = desktop.window(handle=handle)
+            app = PyWinApplication(backend="uia").connect(handle=handle)
+            win = app.window(handle=handle)
             _ = win.window_text()
             return win
         except Exception as exc:
