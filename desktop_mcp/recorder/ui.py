@@ -73,6 +73,13 @@ class RecorderUI:
         )
         drop_lbl.pack(anchor=tk.W, pady=(5, 2))
 
+        # Tip / Hint label
+        tip_lbl = tk.Label(
+            self.setup_frame, text="Tip: Open your target application first so it appears in the dropdown.", fg="#89b4fa", bg="#1e1e2e",
+            font=("Segoe UI", 8, "italic")
+        )
+        tip_lbl.pack(anchor=tk.W, pady=(0, 5))
+
         # Custom combobox autocompletion
         self.combo = ttk.Combobox(self.setup_frame, values=window_list, font=("Segoe UI", 10))
         self.combo.pack(fill=tk.X, pady=(0, 15))

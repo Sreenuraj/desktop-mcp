@@ -124,6 +124,10 @@ We provide automated setup and execution scripts that handle elevating privilege
 
 #### 1. Interactive Config Screen (On Startup)
 If you start the recorder without specifying a target application via command-line arguments:
+
+> [!TIP]
+> **Open your target application first**: The dropdown list dynamically enumerates currently running/open windows. If your application is not running yet, open it before launching the recorder, or enter/browse to its executable path in the manual entry field to auto-launch it.
+
 - **Target Application Dropdown**: A search-as-you-type combobox containing all active window titles is displayed. Typing in the box filters the dropdown dynamically.
 - **Executable File Browser**: A manual path entry field with a **Browse...** button that opens a native file dialog so you can easily select a `.exe` binary.
 - **Workspace Minimization**: A checkbox to toggle whether all other windows are minimized on startup (enabled by default).
