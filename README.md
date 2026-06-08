@@ -121,11 +121,24 @@ We provide automated setup and execution scripts that handle elevating privilege
    *Alternatively, run `python examples/codegen_recorder.py -a "Calculator"`.*
 
 ### UI and Console Controls
-- **Floating UI Overlay**: On Windows, starting the recorder opens a dark-themed, always-on-top floating window showing a **● Recording** status. Your manual inputs (clicks, keypresses, text entries) will display there in real-time.
-- **Pause & Resume**: Use the **Pause / Resume** button in the floating UI to temporarily suspend recording. While paused, the status displays "Paused" (yellow) and no user actions are captured, allowing you to navigate/interact without recording clutter.
-- **Copy Transcript**: Click **Copy Transcript** on the floating window to copy all recorded actions to your clipboard.
-- **Terminal Fallback**: If Tkinter is not installed on the system, the recorder will output a warning and automatically fall back to **Console-only Mode**. In this mode, actions continue to print to the terminal in real-time, and you can copy the transcript directly from the console output or press `Ctrl+C` to exit.
-- **Mock Mode**: On macOS or Linux, running the recorder will output an example interaction transcript in simulated mode for testing purposes.
+
+#### 1. Interactive Config Screen (On Startup)
+If you start the recorder without specifying a target application via command-line arguments:
+- **Target Application Dropdown**: A search-as-you-type combobox containing all active window titles is displayed. Typing in the box filters the dropdown dynamically.
+- **Executable File Browser**: A manual path entry field with a **Browse...** button that opens a native file dialog so you can easily select a `.exe` binary.
+- **Workspace Minimization**: A checkbox to toggle whether all other windows are minimized on startup (enabled by default).
+- **Desktop Recording**: A fallback button to record the full desktop screen (no specific application focus/minimization).
+
+#### 2. Interactive Console Fallback Setup
+If Tkinter is not installed:
+- The terminal displays a **Console Setup Menu** showing a numbered list of all open window titles.
+- It prompts you to select a target application by entering its number, typing a title, entering a path, or pressing Enter to record the full desktop.
+
+#### 3. Recording Overlay & Controls
+- **Floating UI Overlay**: Once recording starts, a dark-themed, always-on-top floating window displays your captured actions in real-time.
+- **Pause & Resume**: Click **Pause** to temporarily suspend event logging, and click **Resume** to restart capturing.
+- **Copy Transcript**: Click **Copy Transcript** to copy all recorded actions to your clipboard.
+- **Mock Mode**: On macOS or Linux, the config wizard and recording overlay run in simulated/mock mode for developer testing.
 
 ---
 
