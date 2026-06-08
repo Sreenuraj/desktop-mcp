@@ -24,6 +24,7 @@ class RecorderUI:
         self.events = []
         self._events_lock = threading.Lock()
         self.paused = False
+        self.recording_state = "recording"
 
         self.setup_frame = None
         self.recorder_frame = None
@@ -48,7 +49,7 @@ class RecorderUI:
 
         self.root = tk.Tk()
         self.root.title("Desktop MCP - Action Recorder")
-        self.root.geometry("520x500")
+        self.root.geometry("720x500")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e2e")
         self.root.protocol("WM_DELETE_WINDOW", on_close_callback)
@@ -293,13 +294,7 @@ class RecorderUI:
         )
         clear_btn.pack(side=tk.LEFT, padx=5)
 
-        # Target Format Selection on the right
-        format_lbl = tk.Label(
-            toolbar, text="Format:", fg="#a6adc8", bg="#252538",
-            font=("Segoe UI", 9)
-        )
-        format_lbl.pack(side=tk.RIGHT, padx=(5, 5))
-
+        # Target Format Selection on the right (Combobox packed first puts it on the far right, Label packed second puts it to the left of the Combobox)
         self.target_format = tk.StringVar(value="Python (pywinauto)")
         self.format_combo = ttk.Combobox(
             toolbar, textvariable=self.target_format,
@@ -308,6 +303,12 @@ class RecorderUI:
         )
         self.format_combo.pack(side=tk.RIGHT, padx=(0, 10))
         self.format_combo.bind("<<ComboboxSelected>>", lambda e: self._on_format_change())
+
+        format_lbl = tk.Label(
+            toolbar, text="Format:", fg="#a6adc8", bg="#252538",
+            font=("Segoe UI", 9)
+        )
+        format_lbl.pack(side=tk.RIGHT, padx=(5, 5))
 
         # Middle frame for Line numbers + Text Area + Scrollbar
         middle_frame = tk.Frame(self.recorder_frame, bg="#181825")
@@ -362,25 +363,29 @@ class RecorderUI:
             self.events = [{"type": "system", "text": f"Recording started. target_app='{self.target_app or 'None'}'"}]
             self._displayed_event_count = 0
         self.regenerate_display()
-
-    def toggle_record(self) -> None:
-        self.paused = not self.paused
         self.update_states()
 
+    def toggle_record(self) -> None:
+        if self.recording_state == "stopped":
+            self.recording_state = "recording"
+            self.log_event({"type": "system", "text": "Recording Resumed."})
+            self.update_states()
+
     def toggle_pause(self) -> None:
-        self.paused = not self.paused
+        if self.recording_state == "recording":
+            self.recording_state = "paused"
+            self.log_event({"type": "system", "text": "Recording Paused."})
+        elif self.recording_state == "paused":
+            self.recording_state = "recording"
+            self.log_event({"type": "system", "text": "Recording Resumed."})
         self.update_states()
 
     def stop_recording(self) -> None:
-        self.paused = True
-        if self.record_btn:
-            self.record_btn.configure(text="○ Record", fg="#a6adc8")
-        if self.pause_btn:
-            self.pause_btn.configure(text="▶ Resume", fg="#a6e3a1")
-        if self.status_lbl:
-            self.status_lbl.configure(text="Stopped", fg="#a6adc8")
-        self.log_event({"type": "system", "text": "Recording Stopped."})
-        self.prompt_close_target()
+        if self.recording_state != "stopped":
+            self.recording_state = "stopped"
+            self.log_event({"type": "system", "text": "Recording Stopped."})
+            self.update_states()
+            self.prompt_close_target()
 
     def prompt_close_target(self) -> None:
         if self.target_app and not self.target_closed:
@@ -397,22 +402,41 @@ class RecorderUI:
                         print("[System] Close target requested (no callback registered).")
 
     def update_states(self) -> None:
-        if self.paused:
+        if not self.root:
+            return
+
+        if self.recording_state == "recording":
+            self.paused = False
             if self.record_btn:
-                self.record_btn.configure(text="○ Record", fg="#a6adc8")
+                self.record_btn.configure(text="● Record", fg="#45475a", state=tk.DISABLED)
             if self.pause_btn:
-                self.pause_btn.configure(text="▶ Resume", fg="#a6e3a1")
-            if self.status_lbl:
-                self.status_lbl.configure(text="Paused", fg="#f9e2af")
-            self.log_event({"type": "system", "text": "Recording Paused."})
-        else:
-            if self.record_btn:
-                self.record_btn.configure(text="● Record", fg="#f38ba8")
-            if self.pause_btn:
-                self.pause_btn.configure(text="⏸ Pause", fg="#f9e2af")
+                self.pause_btn.configure(text="⏸ Pause", fg="#f9e2af", state=tk.NORMAL)
+            if self.stop_btn:
+                self.stop_btn.configure(text="⏹ Stop", fg="#f38ba8", state=tk.NORMAL)
             if self.status_lbl:
                 self.status_lbl.configure(text="● Recording", fg="#f38ba8")
-            self.log_event({"type": "system", "text": "Recording Resumed."})
+
+        elif self.recording_state == "paused":
+            self.paused = True
+            if self.record_btn:
+                self.record_btn.configure(text="● Record", fg="#45475a", state=tk.DISABLED)
+            if self.pause_btn:
+                self.pause_btn.configure(text="▶ Resume", fg="#a6e3a1", state=tk.NORMAL)
+            if self.stop_btn:
+                self.stop_btn.configure(text="⏹ Stop", fg="#f38ba8", state=tk.NORMAL)
+            if self.status_lbl:
+                self.status_lbl.configure(text="Paused", fg="#f9e2af")
+
+        elif self.recording_state == "stopped":
+            self.paused = True
+            if self.record_btn:
+                self.record_btn.configure(text="● Record", fg="#a6e3a1", state=tk.NORMAL)
+            if self.pause_btn:
+                self.pause_btn.configure(text="⏸ Pause", fg="#45475a", state=tk.DISABLED)
+            if self.stop_btn:
+                self.stop_btn.configure(text="⏹ Stop", fg="#45475a", state=tk.DISABLED)
+            if self.status_lbl:
+                self.status_lbl.configure(text="Stopped", fg="#a6adc8")
 
     def log_action(self, text: str) -> None:
         # Compatibility fallback
