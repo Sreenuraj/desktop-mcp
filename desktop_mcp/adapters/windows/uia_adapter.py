@@ -475,9 +475,21 @@ class WindowsUIAutomationAdapter:
 
         def ensure_focus() -> None:
             try:
-                el.top_level_parent().set_focus()
+                if hasattr(el, "top_level_parent"):
+                    parent = el.top_level_parent()
+                    if hasattr(parent, "is_minimized") and parent.is_minimized():
+                        parent.restore()
+                        import time
+                        time.sleep(0.1)
+                    if hasattr(parent, "set_focus"):
+                        parent.set_focus()
             except Exception:
                 pass
+
+        # Always bring the target window to the foreground and set focus before executing the interaction.
+        # This prevents the application window from losing focus when users approve tool execution
+        # in VS Code/Cursor.
+        ensure_focus()
 
         try:
             if action == "click":
