@@ -292,8 +292,37 @@ def run_windows_recorder(target_app: str = None) -> None:
         IUIA = uia_defines.IUIA
         Desktop = pywin_desktop.Desktop
     except ImportError as exc:
-        print(f"Error: Missing required Windows dependencies. Please install with 'pip install -e .[windows]'\nDetail: {exc}")
-        sys.exit(1)
+        print(f"Error: Missing required Windows dependencies ({exc}).")
+        try:
+            choice = input("Would you like to install the required dependencies automatically now? (y/n) [y]: ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            choice = 'n'
+
+        if choice != 'n':
+            print("Installing dependencies...")
+            import subprocess
+            import os
+
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.abspath(os.path.join(script_dir, ".."))
+            pyproject_path = os.path.join(project_root, "pyproject.toml")
+
+            if os.path.exists(pyproject_path):
+                cmd = [sys.executable, "-m", "pip", "install", "-e", f"{project_root}[windows]"]
+            else:
+                cmd = [sys.executable, "-m", "pip", "install", "pywinauto>=0.6.8", "pywin32>=306", "comtypes>=1.2", "psutil>=5.9", "mss>=9.0", "Pillow>=10.0"]
+
+            try:
+                subprocess.check_call(cmd)
+                print("\nDependencies installed successfully! Please restart the script to run the recorder.")
+                sys.exit(0)
+            except Exception as e:
+                print(f"Failed to install dependencies automatically: {e}")
+                print("Please run manually: pip install -e .[windows]")
+                sys.exit(1)
+        else:
+            print("Please install the dependencies manually: pip install -e .[windows]")
+            sys.exit(1)
 
     print("====================================================")
     print("      Desktop MCP - Action Recorder")
