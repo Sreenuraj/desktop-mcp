@@ -277,7 +277,29 @@ class WindowsUIAutomationAdapter:
         self._check_platform()
         try:
             win = self._resolve_window(window_id)
-            win.set_focus()
+            if hasattr(win, "is_minimized") and win.is_minimized():
+                win.restore()
+                import time
+                time.sleep(0.1)
+
+            if hasattr(win, "handle"):
+                hwnd = win.handle
+                import ctypes
+                import win32gui
+                import win32con
+
+                # Ensure the window is shown and not hidden
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+
+                # Simulating Alt Down/Up key events bypasses Windows SetForegroundWindow restrictions
+                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)  # Alt key down
+                win32gui.SetForegroundWindow(hwnd)
+                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)  # Alt key up
+                import time
+                time.sleep(0.15)
+
+            if hasattr(win, "set_focus"):
+                win.set_focus()
         except WindowNotFoundError:
             raise
         except Exception as exc:
@@ -320,16 +342,33 @@ class WindowsUIAutomationAdapter:
             title = win_wrapper.window_text() or ""
             process_id = win_wrapper.process_id()
             application_id = f"app_{process_id}"
-            active = win32gui.GetForegroundWindow() == handle
 
-            # Auto-restore minimized windows so we can extract controls
+            # Always bring the window to the foreground and activate it before extracting controls.
+            # UWP/modern Windows apps (like Calculator) suspend when in the background or fully covered,
+            # which causes UIA to return an empty control tree. Activating the window wakes it up.
             try:
                 if win_wrapper.is_minimized():
                     win_wrapper.restore()
                     import time
-                    time.sleep(0.3)
+                    time.sleep(0.15)
+
+                import ctypes
+                import win32gui
+                import win32con
+
+                win32gui.ShowWindow(handle, win32con.SW_SHOW)
+                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+                win32gui.SetForegroundWindow(handle)
+                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
+                import time
+                time.sleep(0.15)
+
+                if hasattr(win_wrapper, "set_focus"):
+                    win_wrapper.set_focus()
             except Exception:
                 pass
+
+            active = win32gui.GetForegroundWindow() == handle
 
             # Recursively build hierarchical controls starting from immediate children
             controls: list[Control] = []

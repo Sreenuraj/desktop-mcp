@@ -306,18 +306,29 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
     "click": {
         "description": (
-            "Click a UI control. Uses the Invoke pattern for buttons, "
-            "falling back to coordinate-based click simulation."
+            "Click a UI control. Specify control_id OR search for it on a specific window using window_id and control_text."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "control_id": {
                     "type": "string",
-                    "description": "The control ID to click.",
-                }
+                    "description": "The control ID to click. (Optional if window_id and control_text are provided).",
+                },
+                "window_id": {
+                    "type": "string",
+                    "description": "The window ID to search the control in (required if control_id is omitted).",
+                },
+                "control_text": {
+                    "type": "string",
+                    "description": "Text/name of the control to search for (case-insensitive substring match).",
+                },
+                "control_type": {
+                    "type": "string",
+                    "description": "Control type to filter by (e.g. 'Button', 'CheckBox').",
+                },
             },
-            "required": ["control_id"],
+            "required": [],
         },
     },
     "click_at": {
@@ -419,22 +430,34 @@ TOOL_SCHEMAS: dict[str, dict] = {
     },
     "enter_text": {
         "description": (
-            "Type text into a text input control, replacing any existing "
-            "content."
+            "Type text into a text input control, replacing any existing content. "
+            "Specify control_id OR search for it on a specific window using window_id and control_text."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "control_id": {
                     "type": "string",
-                    "description": "The control ID of the text field.",
+                    "description": "The control ID of the text field. (Optional if window_id and control_text are provided).",
+                },
+                "window_id": {
+                    "type": "string",
+                    "description": "The window ID to search the control in (required if control_id is omitted).",
+                },
+                "control_text": {
+                    "type": "string",
+                    "description": "Text/name of the control to search for (case-insensitive substring match).",
+                },
+                "control_type": {
+                    "type": "string",
+                    "description": "Control type to filter by (e.g. 'Edit').",
                 },
                 "value": {
                     "type": "string",
                     "description": "The text to type.",
                 },
             },
-            "required": ["control_id", "value"],
+            "required": ["value"],
         },
     },
     "append_text": {

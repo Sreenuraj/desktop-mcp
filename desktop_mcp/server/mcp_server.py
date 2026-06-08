@@ -631,8 +631,16 @@ class DesktopMCPServer:
     def _interaction(
         self, action: str, payload: dict[str, Any], **kwargs: Any
     ) -> dict[str, Any]:
+        control_id = payload.get("control_id")
+        if not control_id:
+            window_id = self._required(payload, "window_id")
+            text = payload.get("control_text")
+            type_ = payload.get("control_type")
+            control = self.adapter.find_control(window_id, text=text, type=type_)
+            control_id = control.control_id
+
         return self.adapter.interact(
-            action, self._required(payload, "control_id"), **kwargs
+            action, control_id, **kwargs
         )
 
     def _required(self, payload: dict[str, Any], key: str) -> Any:
