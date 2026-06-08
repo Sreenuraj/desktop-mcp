@@ -1,8 +1,12 @@
 """Platform-agnostic Tkinter GUI for the Desktop MCP Action Recorder."""
 
 import sys
+import threading
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, ttk, messagebox
+
+# Debounce interval in milliseconds — batches rapid events into one UI update
+_DISPLAY_DEBOUNCE_MS = 200
 
 
 class RecorderUI:
@@ -18,6 +22,7 @@ class RecorderUI:
         self.pause_btn = None
         self.stop_btn = None
         self.events = []
+        self._events_lock = threading.Lock()
         self.paused = False
 
         self.setup_frame = None
@@ -31,6 +36,10 @@ class RecorderUI:
         self.all_values = []
         self.target_format = None
         self.target_closed = False
+
+        # Debounce state for batched display updates
+        self._display_scheduled = False
+        self._displayed_event_count = 0
 
     def start(self, on_close_callback, target_app=None, window_list=None, on_recording_started_callback=None) -> bool:
         if tk is None or scrolledtext is None or ttk is None:
@@ -228,7 +237,7 @@ class RecorderUI:
         )
         self.status_lbl.pack(side=tk.LEFT, padx=15)
 
-        app_display = f"Target: {self.target_app[:25]}..." if self.target_app else "Full Desktop"
+        app_display = f"Target: {self.target_app[:25]}..." if self.target_app and len(self.target_app) > 25 else f"Target: {self.target_app}" if self.target_app else "Full Desktop"
         subtitle = tk.Label(
             header, text=app_display, fg="#a6adc8", bg="#313244",
             font=("Segoe UI", 9)
@@ -298,7 +307,7 @@ class RecorderUI:
             width=18, font=("Segoe UI", 9), state="readonly"
         )
         self.format_combo.pack(side=tk.RIGHT, padx=(0, 10))
-        self.format_combo.bind("<<ComboboxSelected>>", lambda e: self.regenerate_display())
+        self.format_combo.bind("<<ComboboxSelected>>", lambda e: self._on_format_change())
 
         # Middle frame for Line numbers + Text Area + Scrollbar
         middle_frame = tk.Frame(self.recorder_frame, bg="#181825")
@@ -342,14 +351,16 @@ class RecorderUI:
                 self.text_area.yview_scroll(-int(delta), "units")
                 self.line_num_area.yview_scroll(-int(delta), "units")
             else:
-                self.text_area.yview_scroll(-int(delta/120), "units")
-                self.line_num_area.yview_scroll(-int(delta/120), "units")
+                self.text_area.yview_scroll(-int(delta / 120), "units")
+                self.line_num_area.yview_scroll(-int(delta / 120), "units")
             return "break"
 
         self.text_area.bind("<MouseWheel>", on_mouse_wheel)
         self.line_num_area.bind("<MouseWheel>", on_mouse_wheel)
 
-        self.events = [{"type": "system", "text": f"Recording started. target_app='{self.target_app or 'None'}'"}]
+        with self._events_lock:
+            self.events = [{"type": "system", "text": f"Recording started. target_app='{self.target_app or 'None'}'"}]
+            self._displayed_event_count = 0
         self.regenerate_display()
 
     def toggle_record(self) -> None:
@@ -410,18 +421,35 @@ class RecorderUI:
         self.log_event({"type": "system", "text": text})
 
     def log_event(self, event_dict: dict) -> None:
-        # Also print Action Log format to console stdout
+        """Thread-safe event logger with debounced display update."""
+        # Console echo (always immediate)
         print(self.format_single_event(event_dict, "Action Log"), end="")
 
-        if not self.root:
+        with self._events_lock:
             self.events.append(event_dict)
+
+        if not self.root:
             return
 
-        def _update():
-            self.events.append(event_dict)
-            self.regenerate_display()
+        # Schedule a debounced display update (coalesce rapid events)
+        if not self._display_scheduled:
+            self._display_scheduled = True
+            try:
+                self.root.after(_DISPLAY_DEBOUNCE_MS, self._debounced_display_update)
+            except Exception:
+                self._display_scheduled = False
 
-        self.root.after(0, _update)
+    def _debounced_display_update(self) -> None:
+        """Timer callback — performs one batched UI refresh."""
+        self._display_scheduled = False
+        if not self.text_area:
+            return
+        self.regenerate_display()
+
+    def _on_format_change(self) -> None:
+        """Format dropdown changed — force full regeneration."""
+        self._displayed_event_count = 0
+        self.regenerate_display()
 
     def format_single_event(self, ev: dict, fmt: str) -> str:
         if fmt == "Action Log":
@@ -525,6 +553,9 @@ class RecorderUI:
         if not self.text_area:
             return
 
+        with self._events_lock:
+            events_snapshot = list(self.events)
+
         fmt = self.target_format.get()
         content = ""
 
@@ -536,11 +567,11 @@ class RecorderUI:
                 content += f"app = Application(backend=\"uia\").connect(title=\"{self.target_app}\")\n"
             else:
                 content += "app = Application(backend=\"uia\").start(\"calc.exe\")  # Fallback launch\n"
-            for ev in self.events:
+            for ev in events_snapshot:
                 content += self.format_single_event(ev, fmt)
         elif fmt == "Desktop MCP Tools":
             tool_lines = []
-            for ev in self.events:
+            for ev in events_snapshot:
                 line = self.format_single_event(ev, fmt)
                 if line:
                     tool_lines.append(line)
@@ -548,7 +579,7 @@ class RecorderUI:
             content += ",\n".join(f"  {line}" for line in tool_lines)
             content += "\n]"
         else:
-            for ev in self.events:
+            for ev in events_snapshot:
                 content += self.format_single_event(ev, fmt)
 
         self.text_area.configure(state=tk.NORMAL)
@@ -557,6 +588,7 @@ class RecorderUI:
         self.text_area.see(tk.END)
         self.text_area.configure(state=tk.DISABLED)
 
+        self._displayed_event_count = len(events_snapshot)
         self.update_line_numbers()
 
     def update_line_numbers(self) -> None:
@@ -577,5 +609,7 @@ class RecorderUI:
         self.root.clipboard_append(content)
 
     def clear_transcript(self) -> None:
-        self.events = [{"type": "system", "text": "Logs cleared."}]
+        with self._events_lock:
+            self.events = [{"type": "system", "text": "Logs cleared."}]
+            self._displayed_event_count = 0
         self.regenerate_display()

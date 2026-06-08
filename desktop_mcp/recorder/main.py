@@ -32,21 +32,8 @@ def main():
     def on_close():
         engine.stop()
 
-        # Flush any remaining text buffers
-        if hasattr(engine, "text_buffer"):
-            for r_id, edit_info in engine.text_buffer.items():
-                try:
-                    val = edit_info["el"].get_value() or ""
-                    if val:
-                        ui.log_event({
-                            "type": "input",
-                            "control_type": edit_info["type"],
-                            "name": edit_info["name"],
-                            "auto_id": edit_info["auto_id"],
-                            "text": val
-                        })
-                except Exception:
-                    pass
+        # Flush any remaining text buffers via engine helper
+        engine.flush_all_text_buffers()
 
         # Prompt target closure if not already handled
         if ui.target_app and not ui.target_closed:
@@ -110,6 +97,7 @@ def main():
 
         # Cleanup on terminal exit
         engine.stop()
+        engine.flush_all_text_buffers()
         if target:
             try:
                 close_choice = input(f"Would you like to close the target application '{target}'? (y/n) [y]: ").strip().lower()

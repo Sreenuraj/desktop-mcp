@@ -22,6 +22,8 @@ class BaseRecorderEngine:
     def __init__(self, ui):
         self.ui = ui
         self.stop_event = threading.Event()
+        self._poll_thread = None
+        self._poll_lock = threading.Lock()
         self.target_hwnd = None
         self.last_runtime_id = None
         self.last_window_handle = None
@@ -32,8 +34,21 @@ class BaseRecorderEngine:
         pass
 
     def stop(self):
-        """Stop the recording engine loop."""
+        """Stop the recording engine loop and join the polling thread."""
         self.stop_event.set()
+        with self._poll_lock:
+            thread = self._poll_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=3.0)
+        with self._poll_lock:
+            self._poll_thread = None
+
+    def reset_state(self):
+        """Reset mutable recording state for a fresh start."""
+        self.stop_event.clear()
+        self.last_runtime_id = None
+        self.last_window_handle = None
+        self.text_buffer.clear()
 
     def get_windows_list(self):
         """Enumerate active/visible top-level windows."""
@@ -58,6 +73,7 @@ class MockRecorderEngine(BaseRecorderEngine):
         ]
 
     def start(self, app_name, minimize_others):
+        self.reset_state()
         print(f"Mock recording started for target: {app_name or 'Full Desktop'} (minimize={minimize_others})")
 
         def mock_generator():
@@ -79,8 +95,9 @@ class MockRecorderEngine(BaseRecorderEngine):
                 if not self.ui.paused:
                     self.ui.log_event(ev)
 
-        gen_thread = threading.Thread(target=mock_generator, daemon=True)
-        gen_thread.start()
+        with self._poll_lock:
+            self._poll_thread = threading.Thread(target=mock_generator, daemon=True)
+            self._poll_thread.start()
 
     def close_target_app(self):
         print("[Mock] Graceful target application closure requested.")
@@ -156,7 +173,12 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                 sys.exit(1)
 
     def start(self, app_name, minimize_others):
+        # Stop any existing polling thread before starting a new one
+        if self._poll_thread and self._poll_thread.is_alive():
+            self.stop()
+
         self.load_dependencies()
+        self.reset_state()
 
         print("====================================================")
         print("      Desktop MCP - Action Recorder")
@@ -164,21 +186,40 @@ class WindowsRecorderEngine(BaseRecorderEngine):
         print("Launch status: Listening to active Windows UIA events.")
 
         # Start UIA listening thread
-        record_thread = threading.Thread(target=self.polling_loop, daemon=True)
-        record_thread.start()
+        with self._poll_lock:
+            self._poll_thread = threading.Thread(
+                target=self._safe_polling_loop, daemon=True
+            )
+            self._poll_thread.start()
 
         if app_name:
-            setup_thread = threading.Thread(target=lambda: self.setup_target_application(app_name, minimize_others), daemon=True)
+            setup_thread = threading.Thread(
+                target=lambda: self.setup_target_application(app_name, minimize_others),
+                daemon=True
+            )
             setup_thread.start()
 
-    def polling_loop(self):
-        # Initialize COM on background thread
+    def _safe_polling_loop(self):
+        """Wrapper around polling_loop that guarantees COM cleanup."""
+        pythoncom = None
         try:
             pythoncom = importlib.import_module("pythoncom")
             pythoncom.CoInitialize()
         except Exception:
             pass
 
+        try:
+            self.polling_loop()
+        except Exception as exc:
+            print(f"[Engine] Polling loop exited with error: {exc}")
+        finally:
+            if pythoncom:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+    def polling_loop(self):
         last_mouse_down = False
 
         while not self.stop_event.is_set():
@@ -231,14 +272,7 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                                 break
 
                         # Target check
-                        is_target = False
-                        if not self.ui.target_app:
-                            is_target = True
-                        else:
-                            if self.target_hwnd and win_handle == self.target_hwnd:
-                                is_target = True
-                            elif win_title and self.ui.target_app.lower() in win_title.lower():
-                                is_target = True
+                        is_target = self._is_target_window(win_title, win_handle)
 
                         if win_handle != self.last_window_handle:
                             self.last_window_handle = win_handle
@@ -250,59 +284,10 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                                 })
 
                         if not should_ignore and is_target:
-                            if click_control_type == "Button":
-                                self.ui.log_event({
-                                    "type": "click",
-                                    "control_type": "Button",
-                                    "name": click_name,
-                                    "auto_id": click_auto_id
-                                })
-                                clicked_el_logged = True
-                            elif click_control_type == "MenuItem":
-                                self.ui.log_event({
-                                    "type": "click",
-                                    "control_type": "MenuItem",
-                                    "name": click_name,
-                                    "auto_id": click_auto_id
-                                })
-                                clicked_el_logged = True
-                            elif click_control_type == "CheckBox":
-                                try:
-                                    state = "Checked" if raw_click_el.is_checked() else "Unchecked"
-                                except Exception:
-                                    state = "Toggled"
-                                self.ui.log_event({
-                                    "type": "checkbox",
-                                    "name": click_name,
-                                    "auto_id": click_auto_id,
-                                    "state": state
-                                })
-                                clicked_el_logged = True
-                            elif click_control_type in ("Edit", "Document"):
-                                # Let standard focus loop handle text box typing/buffering
-                                pass
-                            elif click_control_type == "ComboBox":
-                                try:
-                                    val = raw_click_el.get_value() or ""
-                                except Exception:
-                                    val = ""
-                                self.ui.log_event({
-                                    "type": "combobox",
-                                    "name": click_name,
-                                    "auto_id": click_auto_id,
-                                    "value": val
-                                })
-                                clicked_el_logged = True
-                            else:
-                                if click_name or click_auto_id:
-                                    self.ui.log_event({
-                                        "type": "click",
-                                        "control_type": click_control_type,
-                                        "name": click_name,
-                                        "auto_id": click_auto_id
-                                    })
-                                    clicked_el_logged = True
-
+                            clicked_el_logged = self._log_click_event(
+                                raw_click_el, click_control_type,
+                                click_name, click_auto_id
+                            )
                             if clicked_el_logged:
                                 self.last_runtime_id = click_runtime_id
                 except Exception:
@@ -334,31 +319,11 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                         break
 
                 # Target check
-                is_target = False
-                if not self.ui.target_app:
-                    is_target = True
-                else:
-                    if self.target_hwnd and win_handle == self.target_hwnd:
-                        is_target = True
-                    elif win_title and self.ui.target_app.lower() in win_title.lower():
-                        is_target = True
+                is_target = self._is_target_window(win_title, win_handle)
 
                 # Flush input text buffer immediately when focus shifts to another element
                 if runtime_id != self.last_runtime_id:
-                    if self.last_runtime_id in self.text_buffer:
-                        edit_info = self.text_buffer.pop(self.last_runtime_id)
-                        try:
-                            val = edit_info["el"].get_value() or ""
-                            if val:
-                                self.ui.log_event({
-                                    "type": "input",
-                                    "control_type": edit_info["type"],
-                                    "name": edit_info["name"],
-                                    "auto_id": edit_info["auto_id"],
-                                    "text": val
-                                })
-                        except Exception:
-                            pass
+                    self._flush_text_buffer(self.last_runtime_id)
                     self.last_runtime_id = runtime_id
 
                     # Only capture focus and inputs if target
@@ -368,20 +333,13 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                             control_type = info.control_type or ""
                             auto_id = info.automation_id or ""
 
-                            if control_type == "Button":
-                                self.ui.log_event({
-                                    "type": "click",
-                                    "control_type": "Button",
+                            if control_type in ("Edit", "Document"):
+                                self.text_buffer[runtime_id] = {
+                                    "el": el,
                                     "name": name,
+                                    "type": control_type,
                                     "auto_id": auto_id
-                                })
-                            elif control_type == "MenuItem":
-                                self.ui.log_event({
-                                    "type": "click",
-                                    "control_type": "MenuItem",
-                                    "name": name,
-                                    "auto_id": auto_id
-                                })
+                                }
                             elif control_type == "CheckBox":
                                 try:
                                     state = "Checked" if el.is_checked() else "Unchecked"
@@ -393,13 +351,6 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                                     "auto_id": auto_id,
                                     "state": state
                                 })
-                            elif control_type in ("Edit", "Document"):
-                                self.text_buffer[runtime_id] = {
-                                    "el": el,
-                                    "name": name,
-                                    "type": control_type,
-                                    "auto_id": auto_id
-                                }
                             elif control_type == "ComboBox":
                                 try:
                                     val = el.get_value() or ""
@@ -410,6 +361,13 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                                     "name": name,
                                     "auto_id": auto_id,
                                     "value": val
+                                })
+                            elif control_type in ("Button", "MenuItem"):
+                                self.ui.log_event({
+                                    "type": "click",
+                                    "control_type": control_type,
+                                    "name": name,
+                                    "auto_id": auto_id
                                 })
                             else:
                                 if name or auto_id:
@@ -432,6 +390,86 @@ class WindowsRecorderEngine(BaseRecorderEngine):
             except Exception:
                 pass
 
+    def _is_target_window(self, win_title, win_handle):
+        """Check whether a window belongs to the target application."""
+        if not self.ui.target_app:
+            return True
+        if self.target_hwnd and win_handle == self.target_hwnd:
+            return True
+        if win_title and self.ui.target_app.lower() in win_title.lower():
+            return True
+        return False
+
+    def _log_click_event(self, raw_el, control_type, name, auto_id):
+        """Log a click/checkbox/combobox event. Returns True if logged."""
+        if control_type in ("Button", "MenuItem"):
+            self.ui.log_event({
+                "type": "click",
+                "control_type": control_type,
+                "name": name,
+                "auto_id": auto_id
+            })
+            return True
+        elif control_type == "CheckBox":
+            try:
+                state = "Checked" if raw_el.is_checked() else "Unchecked"
+            except Exception:
+                state = "Toggled"
+            self.ui.log_event({
+                "type": "checkbox",
+                "name": name,
+                "auto_id": auto_id,
+                "state": state
+            })
+            return True
+        elif control_type in ("Edit", "Document"):
+            # Let standard focus loop handle text box typing/buffering
+            return False
+        elif control_type == "ComboBox":
+            try:
+                val = raw_el.get_value() or ""
+            except Exception:
+                val = ""
+            self.ui.log_event({
+                "type": "combobox",
+                "name": name,
+                "auto_id": auto_id,
+                "value": val
+            })
+            return True
+        else:
+            if name or auto_id:
+                self.ui.log_event({
+                    "type": "click",
+                    "control_type": control_type,
+                    "name": name,
+                    "auto_id": auto_id
+                })
+                return True
+        return False
+
+    def _flush_text_buffer(self, runtime_id):
+        """Flush accumulated text input for a given runtime_id."""
+        if runtime_id in self.text_buffer:
+            edit_info = self.text_buffer.pop(runtime_id)
+            try:
+                val = edit_info["el"].get_value() or ""
+                if val:
+                    self.ui.log_event({
+                        "type": "input",
+                        "control_type": edit_info["type"],
+                        "name": edit_info["name"],
+                        "auto_id": edit_info["auto_id"],
+                        "text": val
+                    })
+            except Exception:
+                pass
+
+    def flush_all_text_buffers(self):
+        """Flush all pending text buffers — called on shutdown."""
+        for r_id in list(self.text_buffer.keys()):
+            self._flush_text_buffer(r_id)
+
     def setup_target_application(self, app_name: str, minimize_others: bool = True) -> None:
         try:
             import os
@@ -445,12 +483,15 @@ class WindowsRecorderEngine(BaseRecorderEngine):
             if clean_name.lower().endswith(".exe"):
                 clean_name = clean_name[:-4]
 
-            # Find the target window
-            for win in self.Desktop.windows():
-                title = win.window_text()
-                if title and (app_name.lower() in title.lower() or clean_name.lower() in title.lower()):
-                    self.target_hwnd = win.handle
-                    break
+            # Find the target window using the INSTANCE (not the class)
+            try:
+                for win in self.desktop_instance.windows():
+                    title = win.window_text()
+                    if title and (app_name.lower() in title.lower() or clean_name.lower() in title.lower()):
+                        self.target_hwnd = win.handle
+                        break
+            except Exception as e:
+                print(f"Error enumerating windows: {e}")
 
             # Attempt launch if not running
             if not self.target_hwnd:
@@ -465,11 +506,14 @@ class WindowsRecorderEngine(BaseRecorderEngine):
                     subprocess.Popen(cmd, shell=True)
                     for _ in range(50):
                         time.sleep(0.1)
-                        for win in self.Desktop.windows():
-                            title = win.window_text()
-                            if title and (app_name.lower() in title.lower() or clean_name.lower() in title.lower()):
-                                self.target_hwnd = win.handle
-                                break
+                        try:
+                            for win in self.desktop_instance.windows():
+                                title = win.window_text()
+                                if title and (app_name.lower() in title.lower() or clean_name.lower() in title.lower()):
+                                    self.target_hwnd = win.handle
+                                    break
+                        except Exception:
+                            pass
                         if self.target_hwnd:
                             break
                 except Exception as e:
@@ -486,17 +530,26 @@ class WindowsRecorderEngine(BaseRecorderEngine):
 
             # Enumerate and minimize other visible windows
             if minimize_others:
+                target = self.target_hwnd
+                recorder = recorder_hwnd
+
                 def enum_cb(hwnd, extra):
-                    if hwnd == self.target_hwnd or hwnd == recorder_hwnd:
+                    if hwnd == target or hwnd == recorder:
                         return True
                     if self.win32gui.IsWindowVisible(hwnd):
                         title = self.win32gui.GetWindowText(hwnd)
                         cls = self.win32gui.GetClassName(hwnd)
                         if title and cls not in ("Shell_TrayWnd", "Progman", "Button"):
-                            self.win32gui.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
+                            try:
+                                self.win32gui.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
+                            except Exception:
+                                pass
                     return True
 
-                self.win32gui.EnumWindows(enum_cb, None)
+                try:
+                    self.win32gui.EnumWindows(enum_cb, None)
+                except Exception as e:
+                    print(f"Error minimizing windows: {e}")
 
             # Focus target application
             try:
@@ -510,28 +563,29 @@ class WindowsRecorderEngine(BaseRecorderEngine):
 
     def get_windows_list(self) -> list[str]:
         self.load_dependencies()
+        titles = []
         try:
-            titles = []
-            for win in self.Desktop.windows():
+            # Use the INSTANCE (not the class) to enumerate windows
+            for win in self.desktop_instance.windows():
                 title = win.window_text()
                 if title:
                     titles.append(title)
+        except Exception as e:
+            print(f"[Engine] Error listing Desktop windows: {e}")
 
-            # Supplement with win32gui to ensure all visible windows are listed
-            try:
-                def enum_visible_cb(hwnd, extra):
-                    if self.win32gui.IsWindowVisible(hwnd):
-                        title = self.win32gui.GetWindowText(hwnd)
-                        if title and title not in IGNORE_WINDOW_PATTERNS:
-                            titles.append(title)
-                    return True
-                self.win32gui.EnumWindows(enum_visible_cb, None)
-            except Exception:
-                pass
-
-            return sorted(list(set(titles)))
+        # Supplement with win32gui to ensure all visible windows are listed
+        try:
+            def enum_visible_cb(hwnd, extra):
+                if self.win32gui.IsWindowVisible(hwnd):
+                    title = self.win32gui.GetWindowText(hwnd)
+                    if title and title not in IGNORE_WINDOW_PATTERNS:
+                        titles.append(title)
+                return True
+            self.win32gui.EnumWindows(enum_visible_cb, None)
         except Exception:
-            return []
+            pass
+
+        return sorted(list(set(titles)))
 
     def close_target_app(self):
         if self.target_hwnd:

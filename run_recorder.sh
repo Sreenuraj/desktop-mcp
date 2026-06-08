@@ -29,4 +29,4 @@ echo -e "\n\033[33m====================================================\033[0m"
 echo -e "\033[33mStarting the Codegen Interaction Recorder...\033[0m"
 echo -e "\033[33m====================================================\033[0m\n"
 
-.venv/bin/python -m desktop_mcp.recorder.main "$@"
+.venv/bin/python -m desktop_mcp.recorder "$@"
