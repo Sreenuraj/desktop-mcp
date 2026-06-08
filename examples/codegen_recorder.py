@@ -7,12 +7,13 @@ import importlib
 # Try to import tkinter globally for method scoping
 try:
     import tkinter as tk
-    from tkinter import scrolledtext, filedialog, ttk
+    from tkinter import scrolledtext, filedialog, ttk, messagebox
 except ImportError:
     tk = None
     scrolledtext = None
     filedialog = None
     ttk = None
+    messagebox = None
 
 # List of window titles to ignore during recording (to prevent logging IDE/terminal noise)
 IGNORE_WINDOW_PATTERNS = [
@@ -45,7 +46,9 @@ class RecorderUI:
         self.target_app = None
         self.minimize_others = True
         self.on_recording_started_callback = None
+        self.on_close_target_callback = None
         self.target_format = None
+        self.target_closed = False
 
     def start(self, on_close_callback, target_app=None, window_list=None, on_recording_started_callback=None) -> bool:
         if tk is None or scrolledtext is None or ttk is None:
@@ -236,6 +239,15 @@ class RecorderUI:
         )
         self.pause_btn.pack(side=tk.LEFT, padx=5)
 
+        # Stop Button
+        self.stop_btn = tk.Button(
+            toolbar, text="⏹ Stop", bg="#1e1e2e", fg="#f38ba8",
+            activebackground="#45475a", activeforeground="#f38ba8",
+            font=("Segoe UI", 9, "bold"), command=self.stop_recording,
+            bd=0, padx=10, pady=4, relief=tk.FLAT
+        )
+        self.stop_btn.pack(side=tk.LEFT, padx=5)
+
         # Copy Button
         copy_btn = tk.Button(
             toolbar, text="📋 Copy", bg="#1e1e2e", fg="#89b4fa",
@@ -329,6 +341,33 @@ class RecorderUI:
     def toggle_pause(self) -> None:
         self.paused = not self.paused
         self.update_states()
+
+    def stop_recording(self) -> None:
+        self.paused = True
+        if self.record_btn:
+            self.record_btn.configure(text="○ Record", fg="#a6adc8")
+        if self.pause_btn:
+            self.pause_btn.configure(text="▶ Resume", fg="#a6e3a1")
+        if self.status_lbl:
+            self.status_lbl.configure(text="Stopped", fg="#a6adc8")
+        self.log_event({"type": "system", "text": "Recording Stopped."})
+        self.prompt_close_target()
+
+    def prompt_close_target(self) -> None:
+        if self.target_app and not self.target_closed:
+            if messagebox:
+                ans = messagebox.askyesno(
+                    "Close Application",
+                    f"Would you like to close the target application under test ('{self.target_app}')?"
+                )
+                if ans:
+                    self.target_closed = True
+                    if self.on_close_target_callback:
+                        self.on_close_target_callback()
+                    else:
+                        print("[System] Close target requested (no callback registered).")
+                else:
+                    self.target_closed = True
 
     def update_states(self) -> None:
         if self.paused:
@@ -957,6 +996,24 @@ def run_windows_recorder(target_app: str = None) -> None:
         except Exception:
             return []
 
+    def close_target_app():
+        nonlocal target_hwnd
+        if target_hwnd:
+            try:
+                import win32gui  # type: ignore
+                import win32con  # type: ignore
+                print(f"Closing target application (HWND: {target_hwnd}) gracefully via WM_CLOSE...")
+                win32gui.PostMessage(target_hwnd, win32con.WM_CLOSE, 0, 0)
+            except Exception as e:
+                print(f"Error closing target application gracefully: {e}")
+                try:
+                    from pywinauto import Application  # type: ignore
+                    Application().connect(handle=target_hwnd).kill()
+                except Exception as e2:
+                    print(f"Failed fallback target application kill: {e2}")
+
+    ui.on_close_target_callback = close_target_app
+
     def on_close():
         stop_event.set()
         # Flush any remaining text buffer
@@ -973,6 +1030,11 @@ def run_windows_recorder(target_app: str = None) -> None:
                     })
             except Exception:
                 pass
+
+        # Prompt target close if not already handled
+        if ui.target_app and not ui.target_closed:
+            ui.prompt_close_target()
+
         if ui.root:
             ui.root.destroy()
         sys.exit(0)
@@ -1035,8 +1097,16 @@ def run_mock_recorder() -> None:
     ui = RecorderUI()
     stop_event = threading.Event()
 
+    def close_target_app():
+        print("[Mock] Graceful target application closure requested.")
+        ui.log_event({"type": "system", "text": "Mock target application closed gracefully."})
+
+    ui.on_close_target_callback = close_target_app
+
     def on_close():
         stop_event.set()
+        if ui.target_app and not ui.target_closed:
+            ui.prompt_close_target()
         if ui.root:
             ui.root.destroy()
         sys.exit(0)

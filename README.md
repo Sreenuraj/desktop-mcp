@@ -136,8 +136,10 @@ If Tkinter is not installed:
 
 #### 3. Recording Overlay & Controls
 - **Floating UI Overlay**: Once recording starts, a dark-themed, always-on-top floating window displays your captured actions in real-time.
+- **Dynamic Output Formats**: Select output view formats (Python pywinauto, Desktop MCP tools, or Action Log) using the **Format** dropdown on the right of the toolbar. You can switch formats at any time (**both while recording and after recording**).
 - **Pause & Resume**: Click **Pause** to temporarily suspend event logging, and click **Resume** to restart capturing.
-- **Copy Transcript**: Click **Copy Transcript** to copy all recorded actions to your clipboard.
+- **Stop & Graceful Close**: Click **Stop** to stop recording. The recorder will prompt you (Yes/No dialog) to ask if you want to close the target application under test, closing it gracefully if confirmed. Closing the recorder window also prompts to close the target app.
+- **Copy & Clear**: Click **Copy** to copy all recorded actions to your clipboard (without line numbers), and click **Clear** to clear the current logs.
 - **Mock Mode**: On macOS or Linux, the config wizard and recording overlay run in simulated/mock mode for developer testing.
 
 ---
