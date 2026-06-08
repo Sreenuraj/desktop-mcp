@@ -29,7 +29,10 @@ class RecorderUI:
     def __init__(self):
         self.root = None
         self.text_area = None
+        self.status_lbl = None
+        self.pause_btn = None
         self.transcript = []
+        self.paused = False
 
     def start(self, on_close_callback) -> bool:
         if tk is None or scrolledtext is None:
@@ -46,11 +49,11 @@ class RecorderUI:
         header = tk.Frame(self.root, bg="#313244", pady=10)
         header.pack(fill=tk.X)
 
-        status_lbl = tk.Label(
+        self.status_lbl = tk.Label(
             header, text="● Recording", fg="#f38ba8", bg="#313244",
             font=("Segoe UI", 11, "bold")
         )
-        status_lbl.pack(side=tk.LEFT, padx=15)
+        self.status_lbl.pack(side=tk.LEFT, padx=15)
 
         subtitle = tk.Label(
             header, text="Float Window (Always on Top)", fg="#a6adc8", bg="#313244",
@@ -79,6 +82,13 @@ class RecorderUI:
         )
         copy_btn.pack(side=tk.LEFT, padx=15)
 
+        self.pause_btn = tk.Button(
+            btn_frame, text="Pause", bg="#f9e2af", fg="#11111b",
+            activebackground="#b4befe", font=("Segoe UI", 9, "bold"),
+            command=self.toggle_pause, bd=0, padx=12, pady=6
+        )
+        self.pause_btn.pack(side=tk.LEFT, padx=15)
+
         clear_btn = tk.Button(
             btn_frame, text="Clear Logs", bg="#45475a", fg="#cdd6f4",
             activebackground="#585b70", font=("Segoe UI", 9),
@@ -89,6 +99,21 @@ class RecorderUI:
         self.root.protocol("WM_DELETE_WINDOW", on_close_callback)
         self.root.mainloop()
         return True
+
+    def toggle_pause(self) -> None:
+        self.paused = not self.paused
+        if self.paused:
+            if self.pause_btn:
+                self.pause_btn.configure(text="Resume", bg="#a6e3a1")
+            if self.status_lbl:
+                self.status_lbl.configure(text="Paused", fg="#f9e2af")
+            self.log_action("[System] Recording Paused.")
+        else:
+            if self.pause_btn:
+                self.pause_btn.configure(text="Pause", bg="#f9e2af")
+            if self.status_lbl:
+                self.status_lbl.configure(text="● Recording", fg="#f38ba8")
+            self.log_action("[System] Recording Resumed.")
 
     def log_action(self, text: str) -> None:
         print(text)  # Also print to terminal stdout
@@ -119,7 +144,7 @@ class RecorderUI:
             self.text_area.configure(state=tk.DISABLED)
 
 
-def run_windows_recorder() -> None:
+def run_windows_recorder(target_app: str = None) -> None:
     try:
         uiawrapper = importlib.import_module("pywinauto.controls.uiawrapper")
         uia_defines = importlib.import_module("pywinauto.uia_defines")
@@ -134,7 +159,7 @@ def run_windows_recorder() -> None:
         sys.exit(1)
 
     print("====================================================")
-    print("      Desktop MCP - Codegen Interaction Recorder     ")
+    print("      Desktop MCP - Action Recorder")
     print("====================================================")
     print("Launch status: Listening to active Windows UIA events.")
 
@@ -159,6 +184,15 @@ def run_windows_recorder() -> None:
 
         while not stop_event.is_set():
             time.sleep(0.05)  # 50ms polling for responsive click/focus tracking
+
+            if ui.paused:
+                # Still track mouse state to avoid logging the click on the "Resume" button itself
+                try:
+                    mouse_state = win32api.GetAsyncKeyState(0x01)
+                    last_mouse_down = bool(mouse_state & 0x8000)
+                except Exception:
+                    pass
+                continue
 
             # 1. Check for Mouse Click
             try:
@@ -317,6 +351,82 @@ def run_windows_recorder() -> None:
     record_thread = threading.Thread(target=polling_loop, daemon=True)
     record_thread.start()
 
+    # If target app is specified, run setup logic (launch, minimize others, focus)
+    if target_app:
+        def setup_target_application(app_name: str) -> None:
+            try:
+                import time
+                import subprocess
+
+                # Wait briefly for Tkinter window to initialize
+                time.sleep(0.5)
+
+                # Find the target window
+                target_hwnd = None
+                for win in Desktop.windows():
+                    title = win.window_text()
+                    if title and app_name.lower() in title.lower():
+                        target_hwnd = win.handle
+                        break
+
+                # Attempt launch if not running
+                if not target_hwnd:
+                    print(f"Target application window matching '{app_name}' not found. Launching...")
+                    try:
+                        cmd = app_name
+                        if app_name.lower() in ("notepad", "notepad.exe"):
+                            cmd = "notepad.exe"
+                        elif app_name.lower() in ("calc", "calculator", "calc.exe"):
+                            cmd = "calc.exe"
+
+                        subprocess.Popen(cmd, shell=True)
+                        for _ in range(50):
+                            time.sleep(0.1)
+                            for win in Desktop.windows():
+                                title = win.window_text()
+                                if title and app_name.lower() in title.lower():
+                                    target_hwnd = win.handle
+                                    break
+                            if target_hwnd:
+                                break
+                    except Exception as e:
+                        print(f"Failed to launch target '{app_name}': {e}")
+
+                if not target_hwnd:
+                    print(f"Warning: Could not find or launch window matching '{app_name}'.")
+                    return
+
+                print(f"Target application active (HWND: {target_hwnd})")
+
+                # Find our own recorder window
+                recorder_hwnd = win32gui.FindWindow(None, "Desktop MCP - Action Recorder")
+
+                # Enumerate and minimize other visible windows
+                def enum_cb(hwnd, extra):
+                    if hwnd == target_hwnd or hwnd == recorder_hwnd:
+                        return True
+                    if win32gui.IsWindowVisible(hwnd):
+                        title = win32gui.GetWindowText(hwnd)
+                        cls = win32gui.GetClassName(hwnd)
+                        if title and cls not in ("Shell_TrayWnd", "Progman", "Button"):
+                            win32gui.ShowWindow(hwnd, 6)  # SW_MINIMIZE = 6
+                    return True
+
+                win32gui.EnumWindows(enum_cb, None)
+
+                # Focus target application
+                try:
+                    win32gui.ShowWindow(target_hwnd, 9)  # SW_RESTORE = 9
+                    win32gui.SetForegroundWindow(target_hwnd)
+                except Exception as e:
+                    print(f"Could not focus target window: {e}")
+
+            except Exception as e:
+                print(f"Error in target app setup: {e}")
+
+        setup_thread = threading.Thread(target=lambda: setup_target_application(target_app), daemon=True)
+        setup_thread.start()
+
     def on_close():
         stop_event.set()
         # Flush any remaining text buffer
@@ -344,7 +454,7 @@ def run_windows_recorder() -> None:
 
 def run_mock_recorder() -> None:
     print("====================================================")
-    print("      Desktop MCP - Codegen Interaction Recorder     ")
+    print("      Desktop MCP - Action Recorder")
     print("====================================================")
     print("Running in simulated mode (macOS/Linux platform detected).")
     print("On a Windows machine with pywinauto, this recorder will hook")
@@ -363,8 +473,13 @@ def run_mock_recorder() -> None:
 
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Desktop MCP Interaction Recorder")
+    parser.add_argument("--app", "-a", type=str, help="Target application name or path to launch and focus, minimizing others")
+    args = parser.parse_args()
+
     if sys.platform == "win32":
-        run_windows_recorder()
+        run_windows_recorder(target_app=args.app)
     else:
         run_mock_recorder()
 

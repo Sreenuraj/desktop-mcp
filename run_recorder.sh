@@ -29,4 +29,4 @@ echo -e "\n\033[33m====================================================\033[0m"
 echo -e "\033[33mStarting the Codegen Interaction Recorder...\033[0m"
 echo -e "\033[33m====================================================\033[0m\n"
 
-.venv/bin/python examples/codegen_recorder.py
+.venv/bin/python examples/codegen_recorder.py "$@"

@@ -104,18 +104,26 @@ We provide automated setup and execution scripts that handle elevating privilege
   2. Create/update the `.venv` virtual environment.
   3. Install all Windows and UIA-specific dependencies automatically.
   4. Launch the interaction recorder.
+  *Note*: You can specify a target application to focus and minimize distractions:
+  ```powershell
+  .\run_recorder.ps1 -a Calculator
+  # or
+  run_recorder.bat --app Calculator
+  ```
 - **macOS / Linux**: Run `./run_recorder.sh`. This will prepare the virtual environment and launch the recorder in simulated/mock mode.
 
 #### Manual/Global Run (Windows)
 1. Open a command prompt or PowerShell window **as Administrator** (required to listen to focus events across administrative applications).
 2. Start the recorder:
    ```bash
-   desktop-mcp-recorder
+   desktop-mcp-recorder --app "Calculator"
    ```
-   *Alternatively, run `python examples/codegen_recorder.py`.*
+   *Alternatively, run `python examples/codegen_recorder.py -a "Calculator"`.*
 
-### UI and Console Fallback
-- **Floating UI Overlay**: On Windows, starting the recorder opens a dark-themed, always-on-top floating window showing a **● Recording** status. Your manual inputs (clicks, keypresses, text entries) will display there in real-time. Click **Copy Transcript** on the floating window to copy the recorded actions to your clipboard.
+### UI and Console Controls
+- **Floating UI Overlay**: On Windows, starting the recorder opens a dark-themed, always-on-top floating window showing a **● Recording** status. Your manual inputs (clicks, keypresses, text entries) will display there in real-time.
+- **Pause & Resume**: Use the **Pause / Resume** button in the floating UI to temporarily suspend recording. While paused, the status displays "Paused" (yellow) and no user actions are captured, allowing you to navigate/interact without recording clutter.
+- **Copy Transcript**: Click **Copy Transcript** on the floating window to copy all recorded actions to your clipboard.
 - **Terminal Fallback**: If Tkinter is not installed on the system, the recorder will output a warning and automatically fall back to **Console-only Mode**. In this mode, actions continue to print to the terminal in real-time, and you can copy the transcript directly from the console output or press `Ctrl+C` to exit.
 - **Mock Mode**: On macOS or Linux, running the recorder will output an example interaction transcript in simulated mode for testing purposes.
 
