@@ -480,6 +480,24 @@ class WindowsUIAutomationAdapter:
                         parent.restore()
                         import time
                         time.sleep(0.1)
+
+                    if hasattr(parent, "handle"):
+                        hwnd = parent.handle
+                        import ctypes
+                        import win32gui
+                        import win32con
+
+                        # Ensure the window is shown and not hidden/minimized
+                        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+
+                        # Simulating Alt Down/Up key events bypasses Windows SetForegroundWindow restrictions
+                        ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)  # Alt key down
+                        win32gui.SetForegroundWindow(hwnd)
+                        ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)  # Alt key up
+
+                        import time
+                        time.sleep(0.1)
+
                     if hasattr(parent, "set_focus"):
                         parent.set_focus()
             except Exception:
