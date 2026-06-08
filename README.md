@@ -118,7 +118,7 @@ We provide automated setup and execution scripts that handle elevating privilege
    ```bash
    desktop-mcp-recorder --app "Calculator"
    ```
-   *Alternatively, run `python examples/codegen_recorder.py -a "Calculator"`.*
+   *Alternatively, run `python -m desktop_mcp.recorder.main -a "Calculator"`.*
 
 ### UI and Console Controls
 

@@ -21,7 +21,7 @@ windows = [
 
 [project.scripts]
 desktop-mcp = "desktop_mcp.server.stdio:main"
-desktop-mcp-recorder = "examples.codegen_recorder:main"
+desktop-mcp-recorder = "desktop_mcp.recorder.main:main"
 
 [build-system]
 requires = ["setuptools>=69", "wheel"]

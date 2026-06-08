@@ -48,4 +48,4 @@ Write-Host "`n====================================================" -ForegroundC
 Write-Host "Starting the Codegen Interaction Recorder..." -ForegroundColor Green
 Write-Host "====================================================`n" -ForegroundColor Yellow
 
-& $VenvPython examples/codegen_recorder.py $args
+& $VenvPython -m desktop_mcp.recorder.main $args
