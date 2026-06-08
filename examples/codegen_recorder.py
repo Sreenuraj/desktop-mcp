@@ -123,8 +123,12 @@ def run_windows_recorder() -> None:
     try:
         uiawrapper = importlib.import_module("pywinauto.controls.uiawrapper")
         uia_defines = importlib.import_module("pywinauto.uia_defines")
+        pywin_desktop = importlib.import_module("pywinauto")
+        win32api = importlib.import_module("win32api")
+        win32gui = importlib.import_module("win32gui")
         UIAWrapper = uiawrapper.UIAWrapper
         IUIA = uia_defines.IUIA
+        Desktop = pywin_desktop.Desktop
     except ImportError as exc:
         print(f"Error: Missing required Windows dependencies. Please install with 'pip install -e .[windows]'\nDetail: {exc}")
         sys.exit(1)
@@ -135,6 +139,7 @@ def run_windows_recorder() -> None:
     print("Launch status: Listening to active Windows UIA events.")
 
     uia_instance = IUIA()
+    desktop_instance = Desktop(backend="uia")
     last_runtime_id = None
     last_window_handle = None
     text_buffer = {}
@@ -150,8 +155,87 @@ def run_windows_recorder() -> None:
             pass
 
         nonlocal last_runtime_id, last_window_handle
+        last_mouse_down = False
+
         while not stop_event.is_set():
-            time.sleep(0.1)
+            time.sleep(0.05)  # 50ms polling for responsive click/focus tracking
+
+            # 1. Check for Mouse Click
+            try:
+                mouse_state = win32api.GetAsyncKeyState(0x01)  # Left Mouse Button
+                is_mouse_down = bool(mouse_state & 0x8000)
+            except Exception:
+                is_mouse_down = False
+
+            click_detected = is_mouse_down and not last_mouse_down
+            last_mouse_down = is_mouse_down
+
+            clicked_el_logged = False
+            if click_detected:
+                try:
+                    x, y = win32gui.GetCursorPos()
+                    raw_click_el = desktop_instance.from_point(x, y)
+                    if raw_click_el:
+                        click_info = raw_click_el.element_info
+                        click_runtime_id = click_info.runtime_id
+                        click_name = click_info.name or ""
+                        click_control_type = click_info.control_type or ""
+                        click_auto_id = click_info.automation_id or ""
+
+                        try:
+                            parent_win = raw_click_el.top_level_parent()
+                            win_title = parent_win.element_info.name or ""
+                            win_handle = parent_win.handle
+                        except Exception:
+                            win_title = ""
+                            win_handle = None
+
+                        should_ignore = False
+                        win_title_lower = win_title.lower()
+                        for pattern in IGNORE_WINDOW_PATTERNS:
+                            if pattern in win_title_lower:
+                                should_ignore = True
+                                break
+
+                        if not should_ignore:
+                            if win_handle != last_window_handle:
+                                last_window_handle = win_handle
+                                ui.log_action(f"\n[Window] Focus shifted to: '{win_title}' (HWND: {win_handle})")
+
+                            if click_control_type == "Button":
+                                ui.log_action(f"  -> Clicked Button: '{click_name}' (auto_id='{click_auto_id}')")
+                                clicked_el_logged = True
+                            elif click_control_type == "MenuItem":
+                                ui.log_action(f"  -> Selected Menu Item: '{click_name}' (auto_id='{click_auto_id}')")
+                                clicked_el_logged = True
+                            elif click_control_type == "CheckBox":
+                                try:
+                                    state = "Checked" if raw_click_el.is_checked() else "Unchecked"
+                                except Exception:
+                                    state = "Toggled"
+                                ui.log_action(f"  -> CheckBox: '{click_name}' (auto_id='{click_auto_id}') -> {state}")
+                                clicked_el_logged = True
+                            elif click_control_type in ("Edit", "Document"):
+                                # Let standard focus loop handle text box typing/buffering
+                                pass
+                            elif click_control_type == "ComboBox":
+                                try:
+                                    val = raw_click_el.get_value() or ""
+                                except Exception:
+                                    val = ""
+                                ui.log_action(f"  -> ComboBox: '{click_name}' (auto_id='{click_auto_id}') selection: '{val}'")
+                                clicked_el_logged = True
+                            else:
+                                if click_name or click_auto_id:
+                                    ui.log_action(f"  -> Clicked Element: {click_control_type} '{click_name}' (auto_id='{click_auto_id}')")
+                                    clicked_el_logged = True
+
+                            if clicked_el_logged:
+                                last_runtime_id = click_runtime_id
+                except Exception:
+                    pass
+
+            # 2. Check for Keyboard Focus Shifts
             try:
                 raw_el = uia_instance.uia.GetFocusedElement()
                 if not raw_el:
@@ -195,36 +279,37 @@ def run_windows_recorder() -> None:
 
                     last_runtime_id = runtime_id
 
-                    name = info.name or ""
-                    control_type = info.control_type or ""
-                    auto_id = info.automation_id or ""
+                    if not clicked_el_logged:
+                        name = info.name or ""
+                        control_type = info.control_type or ""
+                        auto_id = info.automation_id or ""
 
-                    if control_type == "Button":
-                        ui.log_action(f"  -> Clicked Button: '{name}' (auto_id='{auto_id}')")
-                    elif control_type == "MenuItem":
-                        ui.log_action(f"  -> Selected Menu Item: '{name}' (auto_id='{auto_id}')")
-                    elif control_type == "CheckBox":
-                        try:
-                            state = "Checked" if el.is_checked() else "Unchecked"
-                        except Exception:
-                            state = "Toggled"
-                        ui.log_action(f"  -> CheckBox: '{name}' (auto_id='{auto_id}') -> {state}")
-                    elif control_type in ("Edit", "Document"):
-                        text_buffer[runtime_id] = {
-                            "el": el,
-                            "name": name,
-                            "type": control_type,
-                            "auto_id": auto_id
-                        }
-                    elif control_type == "ComboBox":
-                        try:
-                            val = el.get_value() or ""
-                        except Exception:
-                            val = ""
-                        ui.log_action(f"  -> ComboBox: '{name}' (auto_id='{auto_id}') selection: '{val}'")
-                    else:
-                        if name or auto_id:
-                            ui.log_action(f"  -> Focused Element: {control_type} '{name}' (auto_id='{auto_id}')")
+                        if control_type == "Button":
+                            ui.log_action(f"  -> Clicked Button: '{name}' (auto_id='{auto_id}')")
+                        elif control_type == "MenuItem":
+                            ui.log_action(f"  -> Selected Menu Item: '{name}' (auto_id='{auto_id}')")
+                        elif control_type == "CheckBox":
+                            try:
+                                state = "Checked" if el.is_checked() else "Unchecked"
+                            except Exception:
+                                state = "Toggled"
+                            ui.log_action(f"  -> CheckBox: '{name}' (auto_id='{auto_id}') -> {state}")
+                        elif control_type in ("Edit", "Document"):
+                            text_buffer[runtime_id] = {
+                                "el": el,
+                                "name": name,
+                                "type": control_type,
+                                "auto_id": auto_id
+                            }
+                        elif control_type == "ComboBox":
+                            try:
+                                val = el.get_value() or ""
+                            except Exception:
+                                val = ""
+                            ui.log_action(f"  -> ComboBox: '{name}' (auto_id='{auto_id}') selection: '{val}'")
+                        else:
+                            if name or auto_id:
+                                ui.log_action(f"  -> Focused Element: {control_type} '{name}' (auto_id='{auto_id}')")
             except Exception:
                 pass
 
