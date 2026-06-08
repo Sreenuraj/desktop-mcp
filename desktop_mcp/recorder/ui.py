@@ -395,8 +395,6 @@ class RecorderUI:
                         self.on_close_target_callback()
                     else:
                         print("[System] Close target requested (no callback registered).")
-                else:
-                    self.target_closed = True
 
     def update_states(self) -> None:
         if self.paused:
@@ -605,8 +603,36 @@ class RecorderUI:
         if not self.root or not self.text_area:
             return
         content = self.text_area.get("1.0", tk.END).strip()
-        self.root.clipboard_clear()
-        self.root.clipboard_append(content)
+
+        # On Windows, win32clipboard is highly reliable and avoids Tkinter ownership/lifecycle issues.
+        if sys.platform == "win32":
+            try:
+                import win32clipboard
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(content, win32clipboard.CF_UNICODETEXT)
+                win32clipboard.CloseClipboard()
+                return
+            except Exception as e:
+                print(f"[UI] win32clipboard failed: {e}")
+
+        # On macOS, standard Tkinter clipboard can be unreliable or lost when the event loop updates.
+        # Use pbcopy command if on macOS for robust OS clipboard integration.
+        elif sys.platform == "darwin":
+            try:
+                import subprocess
+                process = subprocess.Popen('pbcopy', stdin=subprocess.PIPE, text=True)
+                process.communicate(input=content)
+                return
+            except Exception as e:
+                print(f"[UI] pbcopy failed: {e}")
+
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(content)
+            self.root.update()  # Force update to push clipboard to OS
+        except Exception as e:
+            print(f"[UI] Clipboard copy failed: {e}")
 
     def clear_transcript(self) -> None:
         with self._events_lock:
