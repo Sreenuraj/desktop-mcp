@@ -22,6 +22,7 @@ def main():
 
     # Setup callbacks
     ui.on_close_target_callback = engine.close_target_app
+    ui.on_refresh_windows_callback = engine.get_windows_list
 
     def on_recording_started(app, minimize_others):
         engine.start(app, minimize_others)

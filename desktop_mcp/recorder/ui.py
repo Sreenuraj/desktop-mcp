@@ -27,6 +27,8 @@ class RecorderUI:
         self.minimize_others = True
         self.on_recording_started_callback = None
         self.on_close_target_callback = None
+        self.on_refresh_windows_callback = None
+        self.all_values = []
         self.target_format = None
         self.target_closed = False
 
@@ -80,29 +82,46 @@ class RecorderUI:
         )
         tip_lbl.pack(anchor=tk.W, pady=(0, 5))
 
-        # Custom combobox autocompletion
-        self.combo = ttk.Combobox(self.setup_frame, values=window_list, font=("Segoe UI", 10))
-        self.combo.pack(fill=tk.X, pady=(0, 15))
+        # Custom combobox autocompletion frame
+        combo_frame = tk.Frame(self.setup_frame, bg="#1e1e2e")
+        combo_frame.pack(fill=tk.X, pady=(0, 15))
+
+        self.combo = ttk.Combobox(combo_frame, values=window_list, font=("Segoe UI", 10))
+        self.combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        refresh_btn = tk.Button(
+            combo_frame, text="🔄 Refresh", bg="#45475a", fg="#cdd6f4",
+            activebackground="#585b70", font=("Segoe UI", 9),
+            command=self.refresh_window_list, bd=0, padx=10
+        )
+        refresh_btn.pack(side=tk.RIGHT, padx=(10, 0))
 
         # Enable autocomplete filtering
-        all_values = list(window_list)
+        self.all_values = list(window_list)
 
         def on_keyrelease(event):
             if event.keysym in ("Up", "Down", "Left", "Right", "Return", "Escape", "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R"):
                 return
             typed = self.combo.get()
             if not typed:
-                self.combo['values'] = all_values
+                self.combo['values'] = self.all_values
             else:
-                filtered = [item for item in all_values if typed.lower() in item.lower()]
+                filtered = [item for item in self.all_values if typed.lower() in item.lower()]
                 self.combo['values'] = filtered
             try:
                 self.combo.post()
             except Exception:
                 pass
 
+        def on_focus_in(event):
+            self.refresh_window_list()
+            try:
+                self.combo.post()
+            except Exception:
+                pass
+
         self.combo.bind('<KeyRelease>', on_keyrelease)
-        self.combo.bind('<FocusIn>', lambda e: self.combo.post())
+        self.combo.bind('<FocusIn>', on_focus_in)
 
         # Manual path section
         path_lbl = tk.Label(
@@ -182,6 +201,18 @@ class RecorderUI:
         self.show_recorder_screen()
         if self.on_recording_started_callback:
             self.on_recording_started_callback(None, False)
+
+    def refresh_window_list(self) -> None:
+        if self.on_refresh_windows_callback:
+            try:
+                window_list = self.on_refresh_windows_callback()
+                self.all_values = list(window_list)
+                if hasattr(self, "combo") and self.combo:
+                    current_val = self.combo.get()
+                    self.combo['values'] = self.all_values
+                    self.combo.set(current_val)
+            except Exception as e:
+                print(f"[UI] Error refreshing window list: {e}")
 
     def show_recorder_screen(self):
         self.recorder_frame = tk.Frame(self.root, bg="#1e1e2e")
