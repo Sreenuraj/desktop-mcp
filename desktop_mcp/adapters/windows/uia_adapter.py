@@ -350,8 +350,8 @@ def _find_uwp_real_child(win_wrapper: Any) -> Any | None:
 
         if real_child:
             try:
-                from pywinauto.uia_element_info import UIAElementInfo
-                from pywinauto.controls.uiawrapper import UIAWrapper
+                from pywinauto.uia_element_info import UIAElementInfo  # type: ignore
+                from pywinauto.controls.uiawrapper import UIAWrapper  # type: ignore
 
                 element_info = UIAElementInfo(real_child)
                 return UIAWrapper(element_info)
@@ -1187,7 +1187,7 @@ class WindowsUIAutomationAdapter:
 
         # Global press_keys with no control target
         if not control_id and action == "press_keys":
-            import pywinauto.keyboard
+            import pywinauto.keyboard  # type: ignore
 
             keys = kwargs.get("keys", "")
             pywinauto.keyboard.send_keys(keys, with_spaces=True, with_tabs=True)
