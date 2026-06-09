@@ -67,6 +67,17 @@ try:
 except ImportError:
     pass
 
+# ---------------------------------------------------------------------------
+# Phase 3 — UWP / suspended-process detection constants
+# ---------------------------------------------------------------------------
+
+# Window class names that indicate a UWP host shell.  The real app UI lives
+# in a nested child window, not directly under the host.
+_UWP_HOST_CLASS_NAMES = frozenset({
+    "ApplicationFrameWindow",
+    "Windows.UI.Core.CoreWindow",
+})
+
 # A map of UIA control types to standard, agent-friendly Desktop MCP control types
 UIA_CONTROL_TYPE_MAP = {
     "Button": "Button",
@@ -239,6 +250,117 @@ def _acquire_foreground(hwnd: int) -> bool:
     except Exception as exc:
         logger.debug("_acquire_foreground failed for hwnd=%d: %s", hwnd, exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.1 — UWP / suspended-process detection helpers
+# ---------------------------------------------------------------------------
+
+def _get_window_class_name(hwnd: int) -> str:
+    """Return the Win32 class name of *hwnd* (empty string on failure)."""
+    try:
+        if win32gui:
+            return win32gui.GetClassName(hwnd) or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _is_uwp_host(hwnd: int) -> bool:
+    """Return True if *hwnd* is a UWP host shell window.
+
+    UWP apps are wrapped in an ``ApplicationFrameWindow`` shell.  The actual
+    app UI lives in a nested child window, not directly under the host.
+    """
+    return _get_window_class_name(hwnd) in _UWP_HOST_CLASS_NAMES
+
+
+def _is_immersive_process(hwnd: int) -> bool:
+    """Return True if the process owning *hwnd* is a UWP/immersive process.
+
+    Uses ``IsImmersiveProcess`` from user32.dll (Windows 8+).
+    Falls back to False on older Windows or when ctypes is unavailable.
+    """
+    try:
+        if not (ctypes_mod and win32process):
+            return False
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        hproc = ctypes_mod.windll.kernel32.OpenProcess(
+            0x0400,  # PROCESS_QUERY_INFORMATION
+            False,
+            pid,
+        )
+        if not hproc:
+            return False
+        try:
+            result = ctypes_mod.windll.user32.IsImmersiveProcess(hproc)
+            return bool(result)
+        finally:
+            ctypes_mod.windll.kernel32.CloseHandle(hproc)
+    except Exception:
+        return False
+
+
+def _find_uwp_real_child(win_wrapper: Any) -> Any | None:
+    """For a UWP ``ApplicationFrameWindow`` host, find the nested child that
+    holds the real app UI.
+
+    The real child is typically the first child whose class name is NOT
+    ``ApplicationFrameTitleBarWindow`` or ``ApplicationFrameInputSinkWindow``.
+    Returns the child wrapper, or None if not found.
+    """
+    try:
+        if not win32gui:
+            return None
+        host_hwnd = win_wrapper.handle
+
+        real_child = None
+
+        def _enum_cb(child_hwnd, _):
+            nonlocal real_child
+            cls = _get_window_class_name(child_hwnd)
+            if cls not in (
+                "ApplicationFrameTitleBarWindow",
+                "ApplicationFrameInputSinkWindow",
+                "ApplicationFrameStatusBarWindow",
+            ):
+                real_child = child_hwnd
+                return False  # stop enumeration
+            return True  # continue
+
+        ctypes_mod.windll.user32.EnumChildWindows(
+            host_hwnd,
+            ctypes_mod.WINFUNCTYPE(
+                ctypes_mod.c_bool, ctypes_mod.POINTER(ctypes_mod.c_int), ctypes_mod.POINTER(ctypes_mod.c_int)
+            )(_enum_cb),
+            0,
+        )
+
+        if real_child:
+            try:
+                desktop = PyWinDesktop(backend="uia")
+                child_win = desktop.window(handle=real_child)
+                return child_win.wrapper_object()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
+def _z_order_prewarm(hwnd: int) -> None:
+    """Bring *hwnd* to the top of the Z-order WITHOUT stealing foreground.
+
+    ``BringWindowToTop`` changes Z-order only — it does not activate the
+    window or steal focus from the current foreground owner.  This gives
+    UWP/suspended-process UIA providers a chance to resume.
+    """
+    try:
+        if win32gui:
+            win32gui.BringWindowToTop(hwnd)
+            time.sleep(0.05)  # give the UIA provider time to wake up
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +647,19 @@ class WindowsUIAutomationAdapter:
     # ------------------------------------------------------------------
 
     def get_window(self, window_id: str) -> Window:
+        """Snapshot a window's control tree.
+
+        Phase 3 snapshot strategy (in order, stopping as soon as controls appear):
+
+        1. Restore/show the window (no foreground steal).
+        2. Z-order pre-warm: ``BringWindowToTop`` without stealing focus.
+        3. Attempt UIA snapshot (children → descendants).
+        4. If empty AND window is a UWP ``ApplicationFrameWindow`` host:
+           walk into the real child window and snapshot that instead.
+        5. If still empty: acquire full foreground (Phase 2.3) and retry once.
+        6. If still empty and window has non-trivial bounds: raise
+           ``SnapshotEmptyError`` with a structured hint.
+        """
         self._check_platform()
         t0 = time.perf_counter()
         try:
@@ -534,81 +669,129 @@ class WindowsUIAutomationAdapter:
             process_id = win_wrapper.process_id()
             application_id = f"app_{process_id}"
 
-            # Bring the window to foreground so UWP/modern apps wake their UIA provider.
+            # Step 1: restore minimised window (no foreground steal yet)
             try:
                 if win_wrapper.is_minimized():
                     win_wrapper.restore()
                     time.sleep(0.15)
-
-                win32gui.ShowWindow(handle, win32con.SW_SHOW)
-                _acquire_foreground(handle)
-
-                if hasattr(win_wrapper, "set_focus"):
-                    win_wrapper.set_focus()
+                if win32gui and win32con:
+                    win32gui.ShowWindow(handle, win32con.SW_SHOW)
             except Exception:
                 pass
 
-            active = _is_foreground(handle)
+            # Step 2: Phase 3.3 — Z-order pre-warm (non-stealing)
+            _z_order_prewarm(handle)
 
-            # --- Phase 1.1: build control tree with error propagation ---
-            controls: list[Control] = []
-            capture_method = "uia_children"
-            first_exception: Exception | None = None
+            def _snapshot_wrapper(wrapper: Any) -> tuple[list[Control], str, Exception | None]:
+                """Try children() then descendants() on *wrapper*.
+                Returns (controls, capture_method, first_exception).
+                """
+                controls_out: list[Control] = []
+                method_out = "uia_children"
+                first_exc: Exception | None = None
 
-            try:
-                children = win_wrapper.children()
-            except Exception as exc:
-                children = []
-                first_exception = exc
-
-            for child in children:
                 try:
-                    controls.extend(self._build_control_tree(child))
+                    children = wrapper.children()
                 except Exception as exc:
-                    logger.warning(
-                        "Error building control tree for child of window %r: %s",
-                        title,
-                        exc,
-                    )
-                    if first_exception is None:
-                        first_exception = exc
+                    children = []
+                    first_exc = exc
 
-            # If children() returned nothing, try descendants() as fallback
-            if not controls:
-                capture_method = "uia_descendants"
-                try:
-                    descendants = win_wrapper.descendants()
-                except Exception as exc:
-                    descendants = []
-                    if first_exception is None:
-                        first_exception = exc
-
-                for desc in descendants:
+                for child in children:
                     try:
-                        if self._should_include_control(desc):
-                            controls.append(self._map_control(desc))
+                        controls_out.extend(self._build_control_tree(child))
                     except Exception as exc:
                         logger.warning(
-                            "Error mapping descendant control in window %r: %s",
-                            title,
-                            exc,
+                            "Error building control tree for child of window %r: %s",
+                            title, exc,
                         )
-                        continue
+                        if first_exc is None:
+                            first_exc = exc
 
+                if not controls_out:
+                    method_out = "uia_descendants"
+                    try:
+                        descendants = wrapper.descendants()
+                    except Exception as exc:
+                        descendants = []
+                        if first_exc is None:
+                            first_exc = exc
+
+                    for desc in descendants:
+                        try:
+                            if self._should_include_control(desc):
+                                controls_out.append(self._map_control(desc))
+                        except Exception as exc:
+                            logger.warning(
+                                "Error mapping descendant in window %r: %s",
+                                title, exc,
+                            )
+
+                return controls_out, method_out, first_exc
+
+            # Step 3: first snapshot attempt
+            controls, capture_method, first_exception = _snapshot_wrapper(win_wrapper)
+
+            # Step 4: Phase 3.2 — UWP host → walk into real child
+            if (not controls or _controls_are_structural_only(controls)) and _is_uwp_host(handle):
+                logger.debug(
+                    "Window %r is a UWP ApplicationFrameWindow host; "
+                    "attempting to snapshot real child.",
+                    title,
+                )
+                real_child = _find_uwp_real_child(win_wrapper)
+                if real_child is not None:
+                    child_controls, child_method, child_exc = _snapshot_wrapper(real_child)
+                    if child_controls and not _controls_are_structural_only(child_controls):
+                        controls = child_controls
+                        capture_method = f"uwp_child_{child_method}"
+                        first_exception = child_exc
+
+            # Step 5: full foreground acquisition + retry (last resort)
+            if not controls or _controls_are_structural_only(controls):
+                logger.debug(
+                    "Snapshot of %r still empty after Z-order prewarm; "
+                    "acquiring foreground and retrying.",
+                    title,
+                )
+                try:
+                    _acquire_foreground(handle)
+                    if hasattr(win_wrapper, "set_focus"):
+                        win_wrapper.set_focus()
+                    time.sleep(0.1)
+                except Exception:
+                    pass
+
+                retry_controls, retry_method, retry_exc = _snapshot_wrapper(win_wrapper)
+                if retry_controls and not _controls_are_structural_only(retry_controls):
+                    controls = retry_controls
+                    capture_method = f"fg_retry_{retry_method}"
+                    first_exception = retry_exc
+
+            active = _is_foreground(handle)
             took_ms = int((time.perf_counter() - t0) * 1000)
 
-            # --- Phase 1.1: raise SnapshotEmptyError when tree is empty ---
+            # Step 6: Phase 1.1 — raise SnapshotEmptyError when tree is still empty
             if not controls or _controls_are_structural_only(controls):
                 has_bounds = _has_non_trivial_bounds(win_wrapper)
                 if has_bounds:
+                    is_uwp = _is_uwp_host(handle) or _is_immersive_process(handle)
                     uia_state = "denied" if first_exception else "empty"
-                    hint = (
-                        "UIA returned no interactive descendants for this window. "
-                        "Likely causes: window is not foreground / process is suspended "
-                        "/ UIA access denied. "
+                    hint_parts = [
+                        "UIA returned no interactive descendants for this window.",
+                        "Likely causes: window is not foreground / process is suspended"
+                        " / UIA access denied.",
+                    ]
+                    if is_uwp:
+                        hint_parts.append(
+                            "This appears to be a UWP/immersive app. "
+                            "UWP providers may suspend when not foreground. "
+                            "Try activate_window then window_snapshot again."
+                        )
+                    hint_parts.append(
                         "Recovery: call activate_window then window_snapshot again, "
                         "or use capture_window for a visual fallback."
                     )
+                    hint = " ".join(hint_parts)
                     raise SnapshotEmptyError(
                         f"UIA returned no descendants for window '{title}'. "
                         f"Likely causes: window is not foreground / process is suspended "
@@ -619,6 +802,7 @@ class WindowsUIAutomationAdapter:
                             "window_id": window_id,
                             "title": title,
                             "is_foreground": active,
+                            "is_uwp": is_uwp,
                             "uia_state": uia_state,
                             "took_ms": took_ms,
                             "hint": hint,
