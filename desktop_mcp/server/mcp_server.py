@@ -544,7 +544,11 @@ class DesktopMCPServer:
             control = self.adapter.find_control(window_id, text=text, type=type_)
             control_id = control.control_id
 
-        return self.adapter.interact(action, control_id, **kwargs)
+        # Phase 2.4: pass restore_foreground_after_action to the adapter
+        restore_fg = bool(payload.get("restore_foreground_after_action", True))
+        return self.adapter.interact(
+            action, control_id, restore_foreground=restore_fg, **kwargs
+        )
 
     def _required(self, payload: dict[str, Any], key: str) -> Any:
         value = payload.get(key)

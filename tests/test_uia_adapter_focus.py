@@ -482,3 +482,92 @@ class TestInteractEnrichedResult:
 
         assert result["method"] == "uia_select"
         assert result["required_foreground"] is False
+
+    def test_result_has_foreground_restored_field(self, monkeypatch):
+        el = _make_element(control_type="Button")
+        el.invoke = MagicMock()
+        adapter = self._make_adapter_with_control(el, monkeypatch)
+
+        result = adapter.interact("click", "ctrl_1_2_3")
+
+        assert "foreground_restored" in result
+
+    def test_toggle_checkbox_uses_uia_toggle(self, monkeypatch):
+        el = _make_element(control_type="CheckBox")
+        el.toggle = MagicMock()
+        adapter = self._make_adapter_with_control(el, monkeypatch)
+
+        result = adapter.interact("toggle", "ctrl_1_2_3")
+
+        assert result["method"] == "uia_toggle"
+        assert result["required_foreground"] is False
+
+    def test_click_checkbox_uses_uia_toggle(self, monkeypatch):
+        """Clicking a CheckBox should use TogglePattern, not click_input."""
+        el = _make_element(control_type="CheckBox")
+        el.toggle = MagicMock()
+        adapter = self._make_adapter_with_control(el, monkeypatch)
+
+        result = adapter.interact("click", "ctrl_1_2_3")
+
+        assert result["method"] == "uia_toggle"
+        assert result["required_foreground"] is False
+
+    def test_expand_node_uses_uia_expand(self, monkeypatch):
+        el = _make_element(control_type="TreeViewItem")
+        el.expand = MagicMock()
+        adapter = self._make_adapter_with_control(el, monkeypatch)
+
+        result = adapter.interact("expand_node", "ctrl_1_2_3")
+
+        assert result["method"] == "uia_expand"
+        assert result["required_foreground"] is False
+
+    def test_collapse_node_uses_uia_collapse(self, monkeypatch):
+        el = _make_element(control_type="TreeViewItem")
+        el.collapse = MagicMock()
+        adapter = self._make_adapter_with_control(el, monkeypatch)
+
+        result = adapter.interact("collapse_node", "ctrl_1_2_3")
+
+        assert result["method"] == "uia_collapse"
+        assert result["required_foreground"] is False
+
+    def test_scroll_into_view_uses_uia_scroll(self, monkeypatch):
+        el = _make_element(control_type="ListItem")
+        el.scroll_into_view = MagicMock()
+        adapter = self._make_adapter_with_control(el, monkeypatch)
+
+        result = adapter.interact("scroll_into_view", "ctrl_1_2_3")
+
+        assert result["method"] == "uia_scroll_into_view"
+        assert result["required_foreground"] is False
+
+    def test_restore_foreground_false_skips_restore(self, monkeypatch):
+        """When restore_foreground=False, foreground_restored should be False."""
+        el = _make_element(control_type="Button")
+        el.invoke = MagicMock()
+        adapter = self._make_adapter_with_control(el, monkeypatch)
+
+        result = adapter.interact("click", "ctrl_1_2_3", restore_foreground=False)
+
+        assert result["foreground_restored"] is False
+
+
+# ---------------------------------------------------------------------------
+# _acquire_foreground helper (Phase 2.3)
+# ---------------------------------------------------------------------------
+
+class TestAcquireForeground:
+    def test_returns_false_when_win32gui_is_none(self, monkeypatch):
+        import desktop_mcp.adapters.windows.uia_adapter as mod
+        monkeypatch.setattr(mod, "win32gui", None)
+        monkeypatch.setattr(mod, "ctypes_mod", None)
+        from desktop_mcp.adapters.windows.uia_adapter import _acquire_foreground
+        assert _acquire_foreground(12345) is False
+
+    def test_returns_bool(self, monkeypatch):
+        from desktop_mcp.adapters.windows.uia_adapter import _acquire_foreground
+        # win32gui is mocked via autouse fixture; result should be a bool
+        result = _acquire_foreground(99999)
+        assert isinstance(result, bool)

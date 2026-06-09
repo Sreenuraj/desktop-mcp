@@ -233,9 +233,11 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "description": (
             "Interact with a UI control (button, checkbox, tab, tree item, etc.). "
             "Specify control_id OR search by window_id + control_text/control_type. "
-            "Returns: control_id, action, method (uia_invoke | uia_select | click_input), "
-            "required_foreground, foreground_taken, took_ms. "
+            "Returns: control_id, action, method (uia_invoke | uia_toggle | uia_select | "
+            "uia_expand | uia_collapse | uia_scroll_into_view | click_input), "
+            "required_foreground, foreground_taken, foreground_restored, took_ms. "
             "method='uia_invoke' means no foreground was needed — this is the preferred path. "
+            "foreground_restored=true means VSCode was returned to foreground after the action. "
             "On error returns isError: true with code CONTROL_NOT_FOUND or CONTROL_DISABLED."
         ),
         "inputSchema": {
@@ -260,8 +262,25 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["left", "right", "double", "hover"],
-                    "description": "Mouse action to perform. Defaults to 'left'.",
+                    "enum": [
+                        "left", "right", "double", "hover",
+                        "toggle", "expand_node", "collapse_node", "scroll_into_view",
+                    ],
+                    "description": (
+                        "Action to perform. Defaults to 'left'. "
+                        "toggle=TogglePattern (checkbox); "
+                        "expand_node/collapse_node=ExpandCollapsePattern (tree/combo); "
+                        "scroll_into_view=ScrollItemPattern."
+                    ),
+                },
+                "restore_foreground_after_action": {
+                    "type": "boolean",
+                    "description": (
+                        "If true (default), restore the previously-focused window "
+                        "(typically VSCode) after the action completes. "
+                        "Set to false only when debugging foreground behaviour."
+                    ),
+                    "default": True,
                 },
             },
             "required": ["session_id"],
