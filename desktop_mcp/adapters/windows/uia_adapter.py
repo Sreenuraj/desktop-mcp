@@ -2364,13 +2364,13 @@ class WindowsUIAutomationAdapter:
 
         # Library versions
         try:
-            import pywinauto
+            import pywinauto  # type: ignore
             result["libraries"]["pywinauto"] = pywinauto.__version__
         except Exception:
             result["libraries"]["pywinauto"] = "unavailable"
 
         try:
-            import comtypes
+            import comtypes  # type: ignore
             result["libraries"]["comtypes"] = comtypes.__version__
         except Exception:
             result["libraries"]["comtypes"] = "unavailable"
