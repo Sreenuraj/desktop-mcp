@@ -1,6 +1,36 @@
 # Desktop MCP
 
-Desktop MCP is a Model Context Protocol (MCP) server designed for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, perform mouse clicks, read grids, and capture screenshots without relying on fragile coordinate-based scripts.
+Desktop MCP is a Model Context Protocol (MCP) server designed for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, perform mouse clicks, read grids, and capture screenshots — **without relying on fragile coordinate-based scripts and without requiring the target window to be in foreground**.
+
+---
+
+## What's New (Phase 1 + 2 — 2026-09-06)
+
+### Phase 1 — Observable Failures
+The server no longer hides failures behind success-shaped responses. Every tool now gives the agent enough information to self-correct.
+
+| Change | Detail |
+|---|---|
+| `SNAPSHOT_EMPTY` error | `window_snapshot` raises a structured error (not `controls: []`) when UIA returns an empty tree. Includes `uia_state`, `is_foreground`, `took_ms`, and a `hint` with the recovery steps. |
+| `isError: true` | Every error response sets `isError: true` on the MCP envelope — the canonical signal LLM-side libraries respect. |
+| `activate_window` observable state | Returns `is_foreground`, `became_foreground`, `foreground_title`, `attempts`, `total_ms` instead of `{}`. |
+| `window_snapshot` enriched | Returns `controls_count`, `capture_method` (`uia_children`/`uia_descendants`), `uia_state` (`live`/`empty`/`denied`), `took_ms`. |
+| `control_tree` enriched | Returns `tree_node_count` and `took_ms`. |
+| `desktop_snapshot` restored | Was removed in `5bb4eb8`; agents in production still call it. Restored as a thin wrapper over `list_windows` + per-window snapshot. |
+| `wait_for_window` actually waits | Now polls every 250 ms up to `timeout_ms` (default 10 000 ms). Previously returned immediately. |
+| `UNKNOWN_TOOL` guard | Unknown tool names return a structured error with `details.valid_tools` listing all 25 valid tool names. |
+| Schema cleanup | `session_id` required on all tools; `additionalProperties: false` on all schemas. |
+
+### Phase 2 — Foreground-Independent Interactions
+Most interactions now work without bringing the target window to foreground.
+
+| Change | Detail |
+|---|---|
+| Pattern-first dispatch | `click` on a Button → `InvokePattern.Invoke()` (no foreground). CheckBox → `TogglePattern`. ListItem/MenuItem/TabItem → `SelectionItemPattern`. `enter_text` → `ValuePattern.SetValue()`. Falls back to `click_input`/`type_keys` only if the pattern fails. |
+| New actions | `toggle`, `expand_node`, `collapse_node`, `scroll_into_view` — all via UIA patterns, no foreground required. |
+| Proper foreground acquisition | Replaces the Alt-key hack with the documented Windows sequence: `AllowSetForegroundWindow` → `AttachThreadInput` → `BringWindowToTop` → `SetForegroundWindow` → `SwitchToThisWindow`. |
+| `restore_foreground_after_action` | Default `true`. After any action that required foreground, VSCode is restored to foreground automatically. Result includes `foreground_restored: bool`. |
+| Enriched interaction results | All interaction tools return `method`, `required_foreground`, `foreground_taken`, `foreground_restored`, `took_ms`. |
 
 ---
 
@@ -8,11 +38,12 @@ Desktop MCP is a Model Context Protocol (MCP) server designed for AI-driven auto
 
 - **Session Management**: Isolated automation sessions per agent workflow.
 - **Application Control**: Launch, attach to, or close applications.
-- **Window Management**: Window list, focus window, maximize, minimize, close, or wait for window creation.
-- **Hierarchical Snapshots**: Recursive retrieval of UI automation trees with smart filtering to remove layout-only elements (e.g. anonymous panes).
-- **Element Interaction**: Pattern-based inputs (clicks, keypresses, checking checkboxes, dropdown/tab selection) with automated coordinate/typing fallbacks.
+- **Window Management**: Window list, focus window, maximize, minimize, close, or wait for window creation (with real polling).
+- **Hierarchical Snapshots**: Recursive retrieval of UI automation trees with smart filtering. Empty trees raise `SNAPSHOT_EMPTY` with recovery hints instead of silently succeeding.
+- **Pattern-First Interactions**: UIA patterns (`Invoke`, `Toggle`, `Value`, `SelectionItem`, `ExpandCollapse`, `ScrollItem`) are tried before mouse synthesis — most actions work without foreground.
+- **Foreground Restoration**: VSCode stays in foreground throughout the agent session by default.
 - **Grid Framework**: Read, edit, search, and select row data from enterprise `DataGrid` and `Table` elements.
-- **Validation**: High-reliability retries on element waits, state assertions, and automatic screenshot captures on failure.
+- **Evidence Collection**: High-resolution screenshots, GIF recordings, and Markdown audit logs.
 
 ---
 
@@ -86,7 +117,6 @@ desktop-mcp
 ```
 
 The server reads JSON-RPC requests from stdin and writes JSON-RPC responses to stdout.
-
 
 ---
 
@@ -196,7 +226,7 @@ If your agent runs inside a virtual environment, point the command to that envir
 
 ## Tool Categories
 
-The server exposes the following refined, highly-capable core tools (18 tools):
+The server exposes 25 core tools:
 
 ### 1. Sessions
 - `create_session`: Creates a new session ID.
@@ -209,28 +239,62 @@ The server exposes the following refined, highly-capable core tools (18 tools):
 
 ### 3. Windows
 - `list_windows`: Lists all top-level windows.
-- `activate_window`: Brings the window into focus.
-- `wait_for_window`: Wait for a window with matching title to open.
+- `activate_window`: Brings the window into focus. **Returns observable state** (`is_foreground`, `became_foreground`, `total_ms`) so the agent can verify success.
+- `wait_for_window`: **Polls** until a window with matching title appears (250 ms interval, configurable `timeout_ms`). Use immediately after `launch_application`.
 - `close_window`: Closes the target window.
 
 ### 4. Snapshots & Discovery
-- `window_snapshot`: **[Core Discovery]** Returns a flat list of all interactive controls.
-- `control_tree`: Returns recursive, hierarchical control nodes.
+- `desktop_snapshot`: Returns a snapshot of **all** visible windows with their controls. Useful for initial discovery.
+- `window_snapshot`: **[Core Discovery]** Returns a flat list of all interactive controls. Returns `controls_count`, `capture_method`, `uia_state`. Raises `SNAPSHOT_EMPTY` (with recovery hint) instead of silently returning an empty list.
+- `control_tree`: Returns recursive, hierarchical control nodes with `tree_node_count`.
 
 ### 5. Interactions
-- `click`: Interact with any element. Accepts an `action` argument (`left`, `right`, `double`, `hover`) and intelligently handles checkboxes, tabs, and tree nodes.
-- `enter_text` / `read_text`: Safely input or extract text.
-- `press_keys`: **[NEW]** Send raw PyWinAuto keys (e.g., `{TAB}`, `^c`) to the active window. Extremely crucial for legacy app support.
-- `select_item`: Direct API for picking items from Dropdowns/ComboBoxes/ListBoxes.
+- `click`: Interact with any element. **Pattern-first**: Button→`InvokePattern`, CheckBox→`TogglePattern`, ListItem/Tab/Radio→`SelectionItemPattern`. Accepts `action`: `left`, `right`, `double`, `hover`, `toggle`, `expand_node`, `collapse_node`, `scroll_into_view`. Supports `restore_foreground_after_action` (default `true`).
+- `enter_text`: Type text. Uses `ValuePattern.SetValue()` first (no foreground needed).
+- `read_text`: Extract text value from a control.
+- `press_keys`: Send raw PyWinAuto keys (e.g., `{TAB}`, `^c`) to a control or the active window.
+- `select_item`: Direct API for picking items from Dropdowns/ComboBoxes/ListBoxes via `SelectionItemPattern`.
 - `drag_drop`: Drag and drop from one control to another.
 
 ### 6. Grids
 - `read_table`: Returns columns and rows from a DataGrid.
 
 ### 7. Evidence & Reporting
-- `capture_window` / `capture_desktop`: High-resolution screengrabs.
-- `start_recording` / `stop_recording`: Capture video evidence of workflows.
+- `capture_window`: Screenshot of a specific window. Use as visual fallback when `window_snapshot` returns `SNAPSHOT_EMPTY`.
+- `capture_desktop`: Full desktop screenshot.
+- `start_recording` / `stop_recording`: Capture GIF evidence of workflows.
 - `generate_report`: Generates a Markdown audit log of the session.
+
+### 8. Coordinates (last resort)
+- `click_at`: Click at absolute screen coordinates. Requires foreground. Use only when no `control_id` is available.
+
+---
+
+## Agent Recovery Playbook
+
+### Empty control tree after launch
+```
+launch_application
+  → wait_for_window (polls until window appears)
+  → window_snapshot
+      ↓ SNAPSHOT_EMPTY (isError: true)?
+  → activate_window  →  window_snapshot (retry)
+      ↓ still empty?
+  → capture_window  (visual fallback)
+```
+
+### Foreground race (approval prompt stole focus)
+```
+click(control_id="ctrl_123", restore_foreground_after_action=true)
+  → method: "uia_invoke", required_foreground: false   ← ideal, no race possible
+  → method: "click_input", foreground_restored: true   ← VSCode restored after action
+```
+
+### Unknown tool name
+```
+error.code == "UNKNOWN_TOOL"
+  → error.details.valid_tools  ← full list of valid tool names
+```
 
 ---
 
@@ -245,10 +309,11 @@ python -m pytest
 Expected result:
 
 ```text
-57 passed
+123 passed
 ```
+
+---
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
