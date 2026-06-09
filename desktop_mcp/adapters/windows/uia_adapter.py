@@ -2607,7 +2607,7 @@ class WindowsUIAutomationAdapter:
             automation_id=info.automation_id,
             enabled=element.is_enabled(),
             visible=element.is_visible(),
-            focused=info.focused,
+            focused=getattr(info, "focused", False),
             value=value,
             bounds=bounds,
             patterns=patterns,
