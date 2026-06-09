@@ -5,7 +5,6 @@ import logging
 import os
 import sys
 import time
-import warnings
 from typing import Any
 
 from desktop_mcp.errors import (
@@ -310,13 +309,20 @@ def _find_uwp_real_child(win_wrapper: Any) -> Any | None:
     Returns the child wrapper, or None if not found.
     """
     try:
-        if not win32gui:
+        if not (win32gui and ctypes_mod):
             return None
         host_hwnd = win_wrapper.handle
 
-        real_child = None
+        real_child: int | None = None
 
-        def _enum_cb(child_hwnd, _):
+        # EnumChildWindows callback signature: BOOL CALLBACK(HWND, LPARAM).
+        # HWND/LPARAM are pointer-sized — use c_void_p for ABI safety on
+        # both 32- and 64-bit Windows.
+        ENUM_PROC = ctypes_mod.WINFUNCTYPE(
+            ctypes_mod.c_bool, ctypes_mod.c_void_p, ctypes_mod.c_void_p
+        )
+
+        def _enum_cb(child_hwnd, _lparam):
             nonlocal real_child
             cls = _get_window_class_name(child_hwnd)
             if cls not in (
@@ -328,13 +334,18 @@ def _find_uwp_real_child(win_wrapper: Any) -> Any | None:
                 return False  # stop enumeration
             return True  # continue
 
-        ctypes_mod.windll.user32.EnumChildWindows(
-            host_hwnd,
-            ctypes_mod.WINFUNCTYPE(
-                ctypes_mod.c_bool, ctypes_mod.POINTER(ctypes_mod.c_int), ctypes_mod.POINTER(ctypes_mod.c_int)
-            )(_enum_cb),
-            0,
-        )
+        # Declare argtypes/restype on EnumChildWindows so ctypes marshals
+        # pointer-sized arguments correctly (matters on 64-bit Python).
+        enum_child = ctypes_mod.windll.user32.EnumChildWindows
+        enum_child.argtypes = [
+            ctypes_mod.c_void_p,  # HWND hWndParent
+            ENUM_PROC,            # WNDENUMPROC lpEnumFunc
+            ctypes_mod.c_void_p,  # LPARAM lParam
+        ]
+        enum_child.restype = ctypes_mod.c_bool
+
+        cb = ENUM_PROC(_enum_cb)
+        enum_child(host_hwnd, cb, 0)
 
         if real_child:
             try:
@@ -343,8 +354,8 @@ def _find_uwp_real_child(win_wrapper: Any) -> Any | None:
                 return child_win.wrapper_object()
             except Exception:
                 pass
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("_find_uwp_real_child failed: %s", exc)
     return None
 
 
@@ -397,12 +408,56 @@ class WindowsUIAutomationAdapter:
     def __init__(self) -> None:
         self._apps: dict[str, Any] = {}
         self._controls_cache: dict[str, Any] = {}
+        # control_id -> hwnd of the parent window that owns the control.
+        # Lets _resolve_control jump straight to the right window instead
+        # of scanning every top-level window on the desktop.
+        self._control_window_hint: dict[str, int] = {}
         import threading
 
         self._recording_thread: threading.Thread | None = None
         self._stop_recording_event = threading.Event()
         self._recording_frames: list[Any] = []
         self._recording_path: str | None = None
+
+        # Phase 5.1 — PID-based exclusion set: the MCP server's own process
+        # chain (typically VSCode/Cursor/Claude → Python). We MUST never
+        # click into our own host process; title-matching is fragile.
+        self._excluded_pids: frozenset[int] = self._compute_excluded_pids()
+
+    def _compute_excluded_pids(self) -> frozenset[int]:
+        """Compute the PID exclusion set: current process + ancestor chain.
+
+        Called once at adapter startup. Includes our own PID and every
+        ancestor PID up to the root. Returns an empty set if psutil is
+        unavailable (non-Windows / dev environment).
+
+        Bounded by a hard depth limit (32) and a "seen PID" check so a
+        mocked/cyclic process tree can never cause an infinite loop.
+        """
+        pids: set[int] = set()
+        try:
+            if not psutil:
+                return frozenset()
+            proc = psutil.Process(os.getpid())
+            for _ in range(32):
+                if proc is None:
+                    break
+                try:
+                    pid = int(proc.pid)
+                except (TypeError, ValueError):
+                    break
+                if pid in pids:
+                    # Cycle / mock returning itself — stop.
+                    break
+                pids.add(pid)
+                try:
+                    proc = proc.parent()
+                except Exception:
+                    break
+        except Exception:
+            pass
+        return frozenset(pids)
+
 
     def _check_platform(self) -> None:
         if sys.platform != "win32":
@@ -930,6 +985,7 @@ class WindowsUIAutomationAdapter:
         action: str,
         control_id: str,
         restore_foreground: bool = True,
+        window_id: str | None = None,
         **kwargs: Any,
     ) -> dict:
         """Execute an action on a control.
@@ -943,6 +999,9 @@ class WindowsUIAutomationAdapter:
         Phase 2.4: if ``restore_foreground=True`` (default), the foreground
         window that was active *before* the action is restored afterwards.
         This keeps VSCode in foreground throughout the agent session.
+
+        ``window_id`` (optional): hint passed by the server to scope the
+        control lookup to a single window instead of scanning all of them.
         """
         self._check_platform()
         t0 = time.perf_counter()
@@ -964,7 +1023,12 @@ class WindowsUIAutomationAdapter:
                 "took_ms": took_ms,
             }
 
-        el = self._resolve_control(control_id)
+        # Test code may monkeypatch ``_resolve_control`` with a single-arg
+        # callable; fall back gracefully in that case.
+        try:
+            el = self._resolve_control(control_id, window_hint=window_id)
+        except TypeError:
+            el = self._resolve_control(control_id)
         if not el.is_enabled():
             raise ControlDisabledError(f"Control is disabled: {control_id}")
 
@@ -2188,7 +2252,20 @@ class WindowsUIAutomationAdapter:
         except Exception as exc:
             raise WindowNotFoundError(f"Window not found: {window_id}") from exc
 
-    def _resolve_control(self, control_id: str) -> Any:
+    def _resolve_control(self, control_id: str, window_hint: str | None = None) -> Any:
+        """Locate a UIA element by control_id.
+
+        Resolution order (fastest → slowest):
+        1. Live cache hit on ``self._controls_cache``.
+        2. Window-hint lookup: if we previously mapped this control,
+           we recorded its parent hwnd in ``self._control_window_hint`` —
+           jump straight to that window and walk only its descendants.
+        3. Explicit ``window_hint`` argument: same as (2) but for cases
+           where the caller (the MCP server) knows the window.
+        4. Fall back to scanning every top-level window, excluding the
+           MCP server's own process chain (PID-based, not title-based).
+        """
+        # ----- 1. cache hit -----
         if control_id in self._controls_cache:
             try:
                 _ = self._controls_cache[control_id].element_info.name
@@ -2196,33 +2273,57 @@ class WindowsUIAutomationAdapter:
             except Exception:
                 del self._controls_cache[control_id]
 
-        def should_skip_window(win) -> bool:
-            try:
-                title = (win.window_text() or "").lower()
-                for pattern in (
-                    "visual studio code", " - cursor", "cmd.exe",
-                    "powershell.exe", "terminal",
-                ):
-                    if pattern in title:
-                        return True
-            except Exception:
-                pass
-            return False
-
         desktop = PyWinDesktop(backend="uia")
-        active_handle = None
 
+        # ----- 2. internal hint from a previous snapshot -----
+        hinted_hwnd = self._control_window_hint.get(control_id)
+        # ----- 3. external hint from the caller -----
+        if not hinted_hwnd and window_hint:
+            try:
+                hinted_hwnd = (
+                    int(window_hint.split("_")[1])
+                    if "_" in window_hint
+                    else int(window_hint)
+                )
+            except (ValueError, IndexError):
+                hinted_hwnd = None
+
+        if hinted_hwnd:
+            try:
+                hinted_win = desktop.window(handle=hinted_hwnd).wrapper_object()
+                for desc in hinted_win.descendants():
+                    desc_id = self._get_control_id(desc)
+                    self._controls_cache[desc_id] = desc
+                    self._control_window_hint[desc_id] = hinted_hwnd
+                    if desc_id == control_id:
+                        return desc
+            except Exception:
+                # Window may have closed; fall through to full scan.
+                pass
+
+        # ----- 4. full scan, PID-excluded -----
+        def _pid_of(win) -> int:
+            try:
+                return int(win.process_id())
+            except Exception:
+                return 0
+
+        # Try the foreground window first (most likely candidate).
         try:
             active_win = desktop.active()
+            active_pid = _pid_of(active_win)
             active_handle = active_win.handle
-            if not should_skip_window(active_win):
+            if active_pid and active_pid not in self._excluded_pids:
                 for desc in active_win.descendants():
                     desc_id = self._get_control_id(desc)
                     self._controls_cache[desc_id] = desc
+                    self._control_window_hint[desc_id] = active_handle
                     if desc_id == control_id:
                         return desc
+            else:
+                active_handle = None
         except Exception:
-            pass
+            active_handle = None
 
         for win in desktop.windows():
             try:
@@ -2230,12 +2331,16 @@ class WindowsUIAutomationAdapter:
                     continue
             except Exception:
                 pass
-            if should_skip_window(win):
+            win_pid = _pid_of(win)
+            if win_pid and win_pid in self._excluded_pids:
+                # Never click into our own host process (VSCode / Cursor / etc.).
                 continue
             try:
+                hwnd = win.handle
                 for desc in win.descendants():
                     desc_id = self._get_control_id(desc)
                     self._controls_cache[desc_id] = desc
+                    self._control_window_hint[desc_id] = hwnd
                     if desc_id == control_id:
                         return desc
             except Exception:
@@ -2255,6 +2360,16 @@ class WindowsUIAutomationAdapter:
         info = element.element_info
         control_id = self._get_control_id(element)
         self._controls_cache[control_id] = element
+
+        # Record the parent-window hint so a later interact()/_resolve_control()
+        # can jump straight to this window without re-scanning the desktop.
+        try:
+            if hasattr(element, "top_level_parent"):
+                top = element.top_level_parent()
+                if hasattr(top, "handle"):
+                    self._control_window_hint[control_id] = top.handle
+        except Exception:
+            pass
 
         raw_type = info.control_type or ""
         normalized_type = UIA_CONTROL_TYPE_MAP.get(raw_type, raw_type)

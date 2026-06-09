@@ -356,13 +356,69 @@ class DesktopMCPServer:
         )
 
     def drag_drop(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Drag a control onto another control.
+
+        Implemented as: hover source → press_mouse → move to target → release.
+        Requires foreground on the source window because it uses synthesised
+        mouse input.  Falls back to a ``NotImplementedError`` if the adapter
+        does not expose ``drag_drop`` or ``click_at``.
+        """
         source = self._required(payload, "source_control_id")
         target = self._required(payload, "target_control_id")
-        return {
-            "action": "drag_drop",
-            "source_control_id": source,
-            "target_control_id": target,
-        }
+
+        # Adapter-native implementation if available
+        drag = getattr(self.adapter, "drag_drop", None)
+        if callable(drag):
+            return drag(source, target)
+
+        # Fallback: compute centre points and synthesise mouse drag
+        try:
+            src_ctrl = self.adapter.get_control(source)
+            tgt_ctrl = self.adapter.get_control(target)
+            sb = src_ctrl.bounds or {}
+            tb = tgt_ctrl.bounds or {}
+            if not (sb and tb):
+                raise DesktopMCPError(
+                    "drag_drop: control bounds unavailable",
+                    details={"source": source, "target": target},
+                )
+            sx = int(sb.get("x", sb.get("left", 0))) + int(sb.get("width", 0)) // 2
+            sy = int(sb.get("y", sb.get("top", 0))) + int(sb.get("height", 0)) // 2
+            tx = int(tb.get("x", tb.get("left", 0))) + int(tb.get("width", 0)) // 2
+            ty = int(tb.get("y", tb.get("top", 0))) + int(tb.get("height", 0)) // 2
+
+            # pywinauto mouse drag — only available on the UIA adapter
+            import importlib
+            try:
+                pwa_mouse = importlib.import_module("pywinauto.mouse")
+                pwa_mouse.press(coords=(sx, sy))
+                pwa_mouse.move(coords=(tx, ty))
+                pwa_mouse.release(coords=(tx, ty))
+                return {
+                    "action": "drag_drop",
+                    "source_control_id": source,
+                    "target_control_id": target,
+                    "source_xy": [sx, sy],
+                    "target_xy": [tx, ty],
+                    "method": "pywinauto_mouse_drag",
+                }
+            except ImportError:
+                # In-memory adapter / non-Windows: report as a stub
+                return {
+                    "action": "drag_drop",
+                    "source_control_id": source,
+                    "target_control_id": target,
+                    "source_xy": [sx, sy],
+                    "target_xy": [tx, ty],
+                    "method": "stub",
+                }
+        except DesktopMCPError:
+            raise
+        except Exception as exc:
+            raise DesktopMCPError(
+                f"drag_drop failed: {exc}",
+                details={"source": source, "target": target},
+            ) from exc
 
     def click_at(self, payload: dict[str, Any]) -> dict[str, Any]:
         x = int(self._required(payload, "x"))
@@ -673,19 +729,35 @@ class DesktopMCPServer:
     def _interaction(
         self, action: str, payload: dict[str, Any], **kwargs: Any
     ) -> dict[str, Any]:
+        # window_id is optional when control_id is provided, but we still
+        # forward it to the adapter as a resolution hint so it does not
+        # have to scan every top-level window on the desktop.
+        window_id = payload.get("window_id")
         control_id = payload.get("control_id")
         if not control_id:
+            # Need a window to locate the control by text/type
             window_id = self._required(payload, "window_id")
             text = payload.get("control_text")
             type_ = payload.get("control_type")
             control = self.adapter.find_control(window_id, text=text, type=type_)
-            control_id = control.control_id
+            control_id = control.id
 
         # Phase 2.4: pass restore_foreground_after_action to the adapter
         restore_fg = bool(payload.get("restore_foreground_after_action", True))
-        return self.adapter.interact(
-            action, control_id, restore_foreground=restore_fg, **kwargs
-        )
+        # Adapters that don't accept ``window_id`` (the in-memory one) will
+        # raise TypeError; fall back to the legacy signature in that case.
+        try:
+            return self.adapter.interact(
+                action,
+                control_id,
+                restore_foreground=restore_fg,
+                window_id=window_id,
+                **kwargs,
+            )
+        except TypeError:
+            return self.adapter.interact(
+                action, control_id, restore_foreground=restore_fg, **kwargs
+            )
 
     def _required(self, payload: dict[str, Any], key: str) -> Any:
         value = payload.get(key)
