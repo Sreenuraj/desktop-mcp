@@ -1,19 +1,24 @@
 # Desktop MCP
 
-Desktop MCP is a Model Context Protocol (MCP) server for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, click buttons, read grids, and capture screenshots — without relying on fragile screen coordinates and without requiring the target window to be in foreground.
+Desktop MCP is a Model Context Protocol (MCP) server for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so an AI agent can launch processes, inspect controls, enter text, click buttons, read grids, capture evidence, and replay recorded sessions — without relying on fragile screen coordinates and, for most actions, without requiring the target window to be in foreground.
 
 ---
 
 ## Capabilities
 
 - **Session Management** — Isolated automation sessions per agent workflow.
-- **Application Control** — Launch, attach to, or close applications by path or process ID.
-- **Window Management** — List windows, bring to focus, wait for a window to appear (with real polling), or close it.
-- **Control Discovery** — Snapshot a window's full control tree as a flat list or hierarchical tree. Empty trees return a structured error with a recovery hint instead of silently succeeding.
-- **Pattern-First Interactions** — UIA automation patterns (`InvokePattern`, `TogglePattern`, `ValuePattern`, `SelectionItemPattern`, `ExpandCollapsePattern`, `ScrollItemPattern`) are used before mouse synthesis. Most button clicks, text entry, and selections work without the target window being in foreground.
-- **Foreground Restoration** — After any action that required foreground, the previously-focused window (typically your IDE) is automatically restored.
-- **Grid Framework** — Read rows and columns from enterprise `DataGrid` and `Table` controls.
-- **Evidence Collection** — High-resolution screenshots, GIF recordings, and Markdown audit logs saved per session.
+- **Application Control** — Launch, attach to, or close applications by path or PID.
+- **Window Management** — List windows, bring to focus, poll until a window appears, or close it.
+- **Control Discovery** — Snapshot a window's full control tree as a flat list or hierarchical tree. Empty trees raise a structured `SNAPSHOT_EMPTY` error with a recovery hint instead of silently succeeding.
+- **Pattern-First Interactions** — UIA automation patterns (`InvokePattern`, `TogglePattern`, `ValuePattern`, `SelectionItemPattern`, `ExpandCollapsePattern`, `ScrollItemPattern`) are tried before mouse synthesis. Most button clicks, text entry, and selections work without bringing the target window to the foreground.
+- **Foreground Restoration** — After an action that did require foreground, the previously-focused window (typically your IDE) is automatically restored.
+- **Waiters** — `wait_for_window`, `wait_for_control`, and `wait_for_idle` poll real state with explicit timeouts.
+- **Rich Control Kinds** — `select_row`, `click_cell`, `read_cell` for DataGrid/ListView; `read_tree` for TreeView.
+- **Dialog Awareness** — `list_dialogs` detects modal/popup windows owned by an application.
+- **Grounding Tools** — `get_foreground_window`, `get_focused_control`, `health_check` let the agent verify environment state and library versions.
+- **Recorder Round-Trip** — Replay recorded sessions deterministically via `replay_recording`. See [docs/recording_schema.md](docs/recording_schema.md).
+- **Evidence Collection** — Per-window screenshots, GIF recordings, and Markdown audit logs saved per session.
+- **Performance & Polish** — Bounded LRU element cache (256 entries, generation-tagged), PID-based exclusion of the host process, per-monitor DPI awareness, and structured JSON logging to stderr.
 
 ---
 
@@ -73,6 +78,17 @@ python -m desktop_mcp.server.stdio
 desktop-mcp
 ```
 
+### Logging
+
+The server emits one structured JSON log line per tool call to stderr. Configure with:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DESKTOP_MCP_LOG_LEVEL` | `INFO` | Standard Python logging level. |
+| `DESKTOP_MCP_LOG_FORMAT` | `json` | `json` or `text`. |
+
+Sensitive arguments (`password`, `token`, `secret`, `api_key`, plus `value` for `enter_text`) are redacted from the logs.
+
 ---
 
 ## Configuring Your AI Client
@@ -110,7 +126,7 @@ To force the in-memory adapter (useful for testing without a Windows machine):
 
 ## Tool Reference
 
-The server exposes 25 tools. Every tool call returns the same envelope:
+The server exposes **36 tools**. Every tool call returns the same envelope:
 
 ```json
 { "success": true,  "data": { ... }, "error": null,    "isError": false }
@@ -144,8 +160,14 @@ The server exposes 25 tools. Every tool call returns the same envelope:
 | Tool | Description |
 |---|---|
 | `desktop_snapshot` | Snapshot all visible windows with their controls. Good for initial discovery. |
-| `window_snapshot` | **Core discovery tool.** Returns a flat list of all interactive controls with `id`, `name`, `type`, `patterns`. Also returns `controls_count`, `uia_state` (`live`/`empty`/`denied`), `capture_method`, `took_ms`. Returns `SNAPSHOT_EMPTY` error (with a `hint`) if UIA returns no controls — never silently returns an empty list. |
+| `window_snapshot` | **Core discovery tool.** Returns a flat list of interactive controls with `id`, `name`, `type`, `patterns`, plus `controls_count`, `uia_state` (`live`/`empty`/`denied`), `capture_method`, `took_ms`. Returns `SNAPSHOT_EMPTY` (with a `hint`) when UIA returns nothing — never silently returns an empty list. |
 | `control_tree` | Hierarchical control tree. Returns `tree_node_count` and `took_ms`. |
+
+### Waiters
+| Tool | Description |
+|---|---|
+| `wait_for_control` | Poll until a control matching `name` / `automation_id` / `control_type` appears in a window. Optional `state`: `exists` / `enabled` / `visible`. |
+| `wait_for_idle` | Wait until the window's UI tree stops changing for `idle_ms` (default 500 ms). Uses `WaitForInputIdle` + tree-settle check. |
 
 ### Interactions
 | Tool | Description |
@@ -158,10 +180,26 @@ The server exposes 25 tools. Every tool call returns the same envelope:
 | `drag_drop` | Drag from one control and drop onto another. |
 | `click_at` | Click at absolute screen coordinates. Last resort — use `control_id` when possible. |
 
-### Grids
+### Grids & Trees
 | Tool | Description |
 |---|---|
 | `read_table` | Read all rows and columns from a DataGrid or Table control. |
+| `select_row` | Select a row in a DataGrid/ListView by `by_text` or `by_index`. |
+| `click_cell` | Click a specific cell by zero-based `row` + `column`. |
+| `read_cell` | Read the value of a specific cell. |
+| `read_tree` | Read a TreeView as a nested `{name, control_id, expanded, children}` structure. |
+
+### Dialogs
+| Tool | Description |
+|---|---|
+| `list_dialogs` | Return modal/popup windows owned by an application — use after actions that may pop a confirmation/error/login dialog. |
+
+### Grounding & Diagnostics
+| Tool | Description |
+|---|---|
+| `get_foreground_window` | Return the current foreground window. Use to confirm `restore_foreground_after_action` worked. |
+| `get_focused_control` | Return the control with keyboard focus in a window. |
+| `health_check` | Diagnostic snapshot: platform, Python/library versions, DPI awareness path, PID chain, excluded host PIDs, cache stats. Call at the start of a session to verify the environment. |
 
 ### Evidence
 | Tool | Description |
@@ -170,6 +208,7 @@ The server exposes 25 tools. Every tool call returns the same envelope:
 | `capture_desktop` | Full desktop screenshot. |
 | `start_recording` / `stop_recording` | Record a GIF of the session. |
 | `generate_report` | Generate a Markdown audit log of all session actions. |
+| `replay_recording` | Replay a recording JSON file (schema: [docs/recording_schema.md](docs/recording_schema.md)). Returns per-step success/error and `aborted` flag. Honours `stop_on_error` (default `true`). |
 
 ---
 
@@ -202,7 +241,13 @@ window_snapshot → SNAPSHOT_EMPTY
 **Unknown tool name:**
 ```
 error.code == "UNKNOWN_TOOL"
-  → error.details.valid_tools  ← full list of 25 valid tool names
+  → error.details.valid_tools  ← full list of all valid tool names
+```
+
+**Dialog appeared after action:**
+```
+click(...) → list_dialogs(application_id="app_...")
+  → count > 0? handle each dialog before continuing
 ```
 
 ---
@@ -236,6 +281,23 @@ python -m desktop_mcp.recorder.main -a "Calculator"
 
 The recorder UI shows captured actions in real time. Use the **Format** dropdown to switch between Python pywinauto, Desktop MCP tools, or Action Log output. You can switch formats while recording or after.
 
+### Replaying a Recording
+
+Save a recording as JSON in the schema documented in [docs/recording_schema.md](docs/recording_schema.md), then replay it via the MCP tool:
+
+```json
+{
+  "tool": "replay_recording",
+  "arguments": {
+    "session_id": "session_001",
+    "path": "/abs/path/recording.json",
+    "stop_on_error": true
+  }
+}
+```
+
+The replayer routes every step through the same `call_tool` path as a live agent, so logs and evidence are identical.
+
 ---
 
 ## Running Tests
@@ -247,7 +309,7 @@ python -m pytest
 Expected:
 
 ```
-123 passed
+95 passed
 ```
 
 ---

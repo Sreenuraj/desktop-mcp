@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import time
+from collections import OrderedDict
 from typing import Any
 
 from desktop_mcp.errors import (
@@ -375,6 +376,166 @@ def _z_order_prewarm(hwnd: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# DPI awareness
+# ---------------------------------------------------------------------------
+
+# Windows 10 1703+ DPI awareness context handles (negative pseudo-handles).
+# Reference: https://learn.microsoft.com/en-us/windows/win32/api/windef/
+_DPI_AWARENESS_CONTEXTS = (
+    -4,  # PER_MONITOR_AWARE_V2 (preferred — accurate on multi-monitor)
+    -3,  # PER_MONITOR_AWARE
+    -2,  # SYSTEM_AWARE
+)
+
+_dpi_awareness_set = False
+
+
+def _set_dpi_awareness() -> dict[str, Any]:
+    """Opt into per-monitor DPI awareness so ``BoundingRectangle`` matches
+    real pixel coordinates on scaled / multi-monitor setups.
+
+    Tried in order:
+      1. ``SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`` — Win10 1703+
+      2. ``SetProcessDpiAwarenessContext(PER_MONITOR_AWARE)``    — older Win10
+      3. ``SetProcessDpiAwareness(2)``                            — Win8.1
+      4. ``SetProcessDPIAware()``                                 — universal fallback
+
+    Idempotent: subsequent calls are no-ops. Returns a small status dict so
+    callers (and ``health_check``) can see which path won, or why none did.
+    """
+    global _dpi_awareness_set
+    status: dict[str, Any] = {"already_set": _dpi_awareness_set, "method": None}
+    if _dpi_awareness_set:
+        return status
+    if not ctypes_mod:
+        status["error"] = "ctypes unavailable"
+        return status
+
+    user32 = ctypes_mod.windll.user32
+    shcore = None
+    try:
+        shcore = ctypes_mod.windll.shcore
+    except Exception:
+        pass
+
+    # 1+2: SetProcessDpiAwarenessContext(<ctx>)
+    set_ctx = getattr(user32, "SetProcessDpiAwarenessContext", None)
+    if set_ctx is not None:
+        for ctx in _DPI_AWARENESS_CONTEXTS:
+            try:
+                if set_ctx(ctx):
+                    _dpi_awareness_set = True
+                    status["method"] = f"SetProcessDpiAwarenessContext({ctx})"
+                    return status
+            except Exception:
+                continue
+
+    # 3: SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE=2)
+    if shcore is not None:
+        try:
+            if shcore.SetProcessDpiAwareness(2) == 0:  # S_OK
+                _dpi_awareness_set = True
+                status["method"] = "SetProcessDpiAwareness(2)"
+                return status
+        except Exception:
+            pass
+
+    # 4: SetProcessDPIAware (true-or-false, no failure mode worth checking)
+    try:
+        user32.SetProcessDPIAware()
+        _dpi_awareness_set = True
+        status["method"] = "SetProcessDPIAware"
+        return status
+    except Exception as exc:
+        status["error"] = str(exc)
+        return status
+
+
+# ---------------------------------------------------------------------------
+# Bounded LRU element cache
+# ---------------------------------------------------------------------------
+
+class _LRUElementCache:
+    """LRU cache keyed by ``control_id`` for live UIA element wrappers.
+
+    Why a custom class instead of ``functools.lru_cache``:
+      - we need explicit eviction on snapshot (generation bump);
+      - we need ``__contains__`` / item access to behave like a dict.
+
+    Each entry is a tuple ``(element, generation)``.  ``generation`` is a
+    monotonically increasing counter bumped by ``bump_generation()`` — any
+    entry older than the current generation is considered stale and
+    silently dropped on lookup.
+
+    Maxsize defaults to 256; bounded so a long session can't leak COM
+    references.
+    """
+
+    __slots__ = ("_data", "_generation", "_maxsize")
+
+    def __init__(self, maxsize: int = 256) -> None:
+        self._data: OrderedDict[str, tuple[Any, int]] = OrderedDict()
+        self._generation: int = 0
+        self._maxsize = maxsize
+
+    def __contains__(self, key: str) -> bool:
+        entry = self._data.get(key)
+        if entry is None:
+            return False
+        # Bump LRU ordering on hit
+        self._data.move_to_end(key)
+        return True
+
+    def __getitem__(self, key: str) -> Any:
+        entry = self._data[key]
+        self._data.move_to_end(key)
+        return entry[0]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key in self._data:
+            self._data.move_to_end(key)
+        self._data[key] = (value, self._generation)
+        # Evict oldest entries past the cap
+        while len(self._data) > self._maxsize:
+            self._data.popitem(last=False)
+
+    def __delitem__(self, key: str) -> None:
+        self._data.pop(key, None)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in self._data:
+            return self[key]
+        return default
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        entry = self._data.pop(key, None)
+        if entry is None:
+            return default
+        return entry[0]
+
+    def clear(self) -> None:
+        self._data.clear()
+
+    def bump_generation(self) -> int:
+        """Invalidate all current entries by bumping the generation counter.
+
+        Old entries remain in the dict for LRU accounting but are dropped
+        on next lookup. Returns the new generation.
+        """
+        self._generation += 1
+        # Eagerly clear: simpler reasoning, and 256 elements is cheap.
+        self._data.clear()
+        return self._generation
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+
+# ---------------------------------------------------------------------------
 # Phase 2.2 — _foreground_lease context manager
 # ---------------------------------------------------------------------------
 
@@ -407,7 +568,10 @@ class WindowsUIAutomationAdapter:
 
     def __init__(self) -> None:
         self._apps: dict[str, Any] = {}
-        self._controls_cache: dict[str, Any] = {}
+        # Bounded LRU cache (max 256 entries, generation-tagged). Cleared on
+        # every snapshot via ``bump_generation()`` so stale COM references
+        # from a closed window can't be returned to the agent.
+        self._controls_cache: _LRUElementCache = _LRUElementCache(maxsize=256)
         # control_id -> hwnd of the parent window that owns the control.
         # Lets _resolve_control jump straight to the right window instead
         # of scanning every top-level window on the desktop.
@@ -419,10 +583,14 @@ class WindowsUIAutomationAdapter:
         self._recording_frames: list[Any] = []
         self._recording_path: str | None = None
 
-        # Phase 5.1 — PID-based exclusion set: the MCP server's own process
-        # chain (typically VSCode/Cursor/Claude → Python). We MUST never
-        # click into our own host process; title-matching is fragile.
+        # PID-based exclusion set: the MCP server's own process chain
+        # (typically VSCode/Cursor/Claude → Python). We MUST never click
+        # into our own host process; title-matching is fragile.
         self._excluded_pids: frozenset[int] = self._compute_excluded_pids()
+
+        # Opt into per-monitor DPI awareness once per process. Safe to call
+        # on non-Windows (no-op via the ctypes None-guard).
+        self._dpi_status: dict[str, Any] = _set_dpi_awareness()
 
     def _compute_excluded_pids(self) -> frozenset[int]:
         """Compute the PID exclusion set: current process + ancestor chain.
@@ -723,6 +891,15 @@ class WindowsUIAutomationAdapter:
             title = win_wrapper.window_text() or ""
             process_id = win_wrapper.process_id()
             application_id = f"app_{process_id}"
+
+            # Bump cache generation so the upcoming snapshot populates a
+            # fresh cache without leaking COM refs from prior snapshots of
+            # windows that may have closed.
+            try:
+                self._controls_cache.bump_generation()
+            except AttributeError:
+                # Cache might have been replaced with a plain dict in tests.
+                pass
 
             # Step 1: restore minimised window (no foreground steal yet)
             try:
@@ -2171,7 +2348,16 @@ class WindowsUIAutomationAdapter:
             "mcp_pid": os.getpid(),
             "libraries": {},
             "dpi_awareness": None,
+            # The DPI-awareness path the adapter actually took (e.g.
+            # "SetProcessDpiAwarenessContext(-4)"), so a multi-monitor smoke
+            # test can verify it didn't silently fall back.
+            "dpi_set_method": (self._dpi_status or {}).get("method"),
             "foreground_window": None,
+            # Diagnostics surfaced so live runs can be cross-checked against
+            # the LRU cap and PID exclusion set.
+            "excluded_pids": sorted(self._excluded_pids),
+            "cache_size": len(self._controls_cache),
+            "cache_generation": getattr(self._controls_cache, "generation", 0),
         }
 
         # Library versions

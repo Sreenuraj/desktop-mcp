@@ -6,6 +6,7 @@ from typing import Any
 from desktop_mcp.adapters.base import DesktopAdapter
 from desktop_mcp.adapters.memory import InMemoryDesktopAdapter
 from desktop_mcp.errors import DesktopMCPError, InvalidRequestError, UnknownToolError
+from desktop_mcp.logging import log_tool_call
 from desktop_mcp.models.response import MCPResponse
 from desktop_mcp.session.session_manager import SessionManager
 
@@ -72,6 +73,8 @@ class DesktopMCPServer:
             "get_foreground_window": self.get_foreground_window,
             "get_focused_control": self.get_focused_control,
             "health_check": self.health_check,
+            # Recorder ↔ MCP round-trip
+            "replay_recording": self.replay_recording,
         }
 
     def call_tool(
@@ -125,6 +128,14 @@ class DesktopMCPServer:
                 session_id = data.get("session_id")
             duration = time.time() - start_time
             log_action(session_id, "success", duration, result_data=data)
+            # Structured JSON log to stderr (mirrors session log).
+            log_tool_call(
+                tool=name,
+                args=payload,
+                took_ms=int(duration * 1000),
+                result_kind="success",
+                session_id=session_id,
+            )
             return MCPResponse.ok(data).to_dict()
         except DesktopMCPError as exc:
             duration = time.time() - start_time
@@ -134,12 +145,28 @@ class DesktopMCPServer:
                 "details": exc.details,
             }
             log_action(session_id, "error", duration, error_info=err_info)
+            log_tool_call(
+                tool=name,
+                args=payload,
+                took_ms=int(duration * 1000),
+                result_kind="error",
+                error_code=exc.code,
+                session_id=session_id,
+            )
             # Phase 1.6: set isError=True on the MCP CallToolResult envelope
             return MCPResponse.fail(exc.code, exc.message, details=exc.details).to_dict()
         except Exception as exc:
             duration = time.time() - start_time
             err_info = {"code": "INTERNAL_ERROR", "message": str(exc), "details": {}}
             log_action(session_id, "error", duration, error_info=err_info)
+            log_tool_call(
+                tool=name,
+                args=payload,
+                took_ms=int(duration * 1000),
+                result_kind="error",
+                error_code="INTERNAL_ERROR",
+                session_id=session_id,
+            )
             return MCPResponse.fail("INTERNAL_ERROR", str(exc)).to_dict()
 
     @property
@@ -721,6 +748,166 @@ class DesktopMCPServer:
     def health_check(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Return diagnostic information about the MCP server environment."""
         return self.adapter.health_check()
+
+    # ------------------------------------------------------------------
+    # replay_recording
+    # ------------------------------------------------------------------
+
+    def replay_recording(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Replay a recording produced by the action recorder.
+
+        Accepts a JSON file in the schema documented in
+        ``docs/recording_schema.md``. Each step in the recording becomes a
+        single ``call_tool`` invocation against this same server instance,
+        so the resulting evidence/logs are indistinguishable from a real
+        agent-driven session.
+
+        Parameters
+        ----------
+        path : str
+            Absolute path to the recording JSON file.
+        session_id : str
+            Session to attribute the replay to.
+        stop_on_error : bool, optional (default: True)
+            If True (default), the first failing step aborts the replay.
+            If False, all steps are attempted and the report lists the
+            failed ones.
+
+        Returns
+        -------
+        dict with:
+          - ``steps_total``        — number of steps in the file
+          - ``steps_executed``     — number actually run
+          - ``steps_succeeded``    — count of successful steps
+          - ``steps_failed``       — count of failed steps
+          - ``results``            — list of {step, tool, success, error?}
+          - ``aborted``            — True if stop_on_error halted the run
+        """
+        import json
+        import os
+
+        session_id = self._required(payload, "session_id")
+        # Validate session exists up-front so we fail fast with a clear error.
+        self.sessions.get_session(session_id)
+
+        path = str(self._required(payload, "path"))
+        stop_on_error = bool(payload.get("stop_on_error", True))
+
+        if not os.path.isfile(path):
+            raise InvalidRequestError(
+                f"Recording file not found: {path}",
+                details={"path": path},
+            )
+
+        try:
+            with open(path, encoding="utf-8") as f:
+                recording = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise DesktopMCPError(
+                f"Failed to load recording {path}: {exc}",
+                details={"path": path},
+            ) from exc
+
+        # Accept either {"steps": [...]} or a raw list of steps. Anything
+        # else is a schema error; bail with a useful message.
+        if isinstance(recording, dict):
+            steps = recording.get("steps")
+            if steps is None:
+                raise InvalidRequestError(
+                    "Recording JSON is missing top-level 'steps' field. "
+                    "See docs/recording_schema.md.",
+                    details={"path": path, "keys": list(recording.keys())},
+                )
+        elif isinstance(recording, list):
+            steps = recording
+        else:
+            raise InvalidRequestError(
+                "Recording JSON must be an object with 'steps' or a list of steps.",
+                details={"path": path, "type": type(recording).__name__},
+            )
+
+        if not isinstance(steps, list):
+            raise InvalidRequestError(
+                "Recording 'steps' must be a list.",
+                details={"path": path, "type": type(steps).__name__},
+            )
+
+        results: list[dict[str, Any]] = []
+        steps_succeeded = 0
+        steps_failed = 0
+        aborted = False
+
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                # Treat malformed step as a failure so the report stays
+                # honest, but don't crash the whole replay.
+                results.append({
+                    "step": index,
+                    "tool": None,
+                    "success": False,
+                    "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": f"Step {index} is not an object",
+                    },
+                })
+                steps_failed += 1
+                if stop_on_error:
+                    aborted = True
+                    break
+                continue
+
+            tool = step.get("tool")
+            args = dict(step.get("arguments") or step.get("args") or {})
+            if not tool:
+                results.append({
+                    "step": index,
+                    "tool": None,
+                    "success": False,
+                    "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": f"Step {index} is missing 'tool' field",
+                    },
+                })
+                steps_failed += 1
+                if stop_on_error:
+                    aborted = True
+                    break
+                continue
+
+            # Inject session_id if the step omitted it (the typical case).
+            args.setdefault("session_id", session_id)
+
+            # Route back through call_tool so logging, evidence capture, and
+            # the standard MCP envelope all flow exactly as they would for
+            # a live agent. This is the whole point of the round-trip.
+            envelope = self.call_tool(tool, args)
+            success = bool(envelope.get("success"))
+            entry: dict[str, Any] = {
+                "step": index,
+                "tool": tool,
+                "success": success,
+            }
+            if not success:
+                entry["error"] = envelope.get("error")
+                steps_failed += 1
+                if stop_on_error:
+                    results.append(entry)
+                    aborted = True
+                    break
+            else:
+                steps_succeeded += 1
+            results.append(entry)
+
+        return {
+            "path": os.path.abspath(path),
+            "session_id": session_id,
+            "steps_total": len(steps),
+            "steps_executed": len(results),
+            "steps_succeeded": steps_succeeded,
+            "steps_failed": steps_failed,
+            "aborted": aborted,
+            "results": results,
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers

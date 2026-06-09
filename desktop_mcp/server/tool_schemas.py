@@ -707,7 +707,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "Return diagnostic information about the MCP server environment. "
             "Includes: platform, python_version, uia_available, parent_pid, mcp_pid, "
             "libraries (pywinauto/comtypes/psutil versions), dpi_awareness, "
-            "foreground_window, pid_chain. "
+            "dpi_set_method, foreground_window, pid_chain, excluded_pids, "
+            "cache_size and cache_generation. "
             "Use this at the start of a session to verify the environment is healthy "
             "and to learn which PIDs to exclude from click targets."
         ),
@@ -717,6 +718,44 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "session_id": {"type": "string", "description": "Active session ID."},
             },
             "required": ["session_id"],
+            "additionalProperties": False,
+        },
+    },
+    # ------------------------------------------------------------------ #
+    # Recorder ↔ MCP round-trip
+    # ------------------------------------------------------------------ #
+    "replay_recording": {
+        "description": (
+            "Replay a recording JSON file by executing each step via this MCP "
+            "server. Use this to deterministically re-run an action recorder "
+            "session against the current desktop. "
+            "The file format is documented in docs/recording_schema.md — a "
+            "minimal recording is: "
+            '{\"steps\": [{\"tool\": \"click\", \"arguments\": {\"control_id\": \"...\"}}]}. '
+            "Each step's session_id defaults to the one passed here, so the "
+            "recording itself can be session-agnostic. "
+            "Returns: steps_total, steps_executed, steps_succeeded, steps_failed, "
+            "aborted, results (per-step success/error list). "
+            "On schema problems returns isError: true with code INVALID_REQUEST."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the recording JSON file.",
+                },
+                "stop_on_error": {
+                    "type": "boolean",
+                    "description": (
+                        "If true (default), abort on the first failing step. "
+                        "Set false to attempt every step and collect all failures."
+                    ),
+                    "default": True,
+                },
+            },
+            "required": ["session_id", "path"],
             "additionalProperties": False,
         },
     },
