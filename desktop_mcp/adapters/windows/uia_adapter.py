@@ -350,11 +350,13 @@ def _find_uwp_real_child(win_wrapper: Any) -> Any | None:
 
         if real_child:
             try:
-                desktop = PyWinDesktop(backend="uia")
-                child_win = desktop.window(handle=real_child)
-                return child_win.wrapper_object()
-            except Exception:
-                pass
+                from pywinauto.uia_element_info import UIAElementInfo
+                from pywinauto.controls.uiawrapper import UIAWrapper
+
+                element_info = UIAElementInfo(real_child)
+                return UIAWrapper(element_info)
+            except Exception as exc:
+                logger.debug("Failed to directly wrap real UWP child window: %s", exc)
     except Exception as exc:
         logger.debug("_find_uwp_real_child failed: %s", exc)
     return None
