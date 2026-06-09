@@ -58,6 +58,20 @@ class DesktopMCPServer:
             "start_recording": self.start_recording,
             "stop_recording": self.stop_recording,
             "generate_report": self.generate_report,
+            # Phase 4.1 — waiters
+            "wait_for_control": self.wait_for_control,
+            "wait_for_idle": self.wait_for_idle,
+            # Phase 4.2 — richer control kinds
+            "select_row": self.select_row,
+            "click_cell": self.click_cell,
+            "read_cell": self.read_cell,
+            "read_tree": self.read_tree,
+            # Phase 4.3 — dialog awareness
+            "list_dialogs": self.list_dialogs,
+            # Phase 4.4 — grounding tools
+            "get_foreground_window": self.get_foreground_window,
+            "get_focused_control": self.get_focused_control,
+            "health_check": self.health_check,
         }
 
     def call_tool(
@@ -532,6 +546,129 @@ class DesktopMCPServer:
         if recorder:
             return recorder()
         return {"recording": False}
+
+    # ------------------------------------------------------------------
+    # Phase 4.1 — wait_for_control
+    # ------------------------------------------------------------------
+
+    def wait_for_control(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Poll until a control matching the criteria appears in a window.
+
+        At least one of name, automation_id, or control_type must be provided.
+        """
+        window_id = self._required(payload, "window_id")
+        name = payload.get("name")
+        automation_id = payload.get("automation_id")
+        control_type = payload.get("control_type")
+        state = str(payload.get("state", "exists"))
+        timeout_ms = int(payload.get("timeout_ms", 10_000))
+
+        if not any([name, automation_id, control_type]):
+            from desktop_mcp.errors import InvalidRequestError
+            raise InvalidRequestError(
+                "wait_for_control requires at least one of: name, automation_id, control_type"
+            )
+
+        return self.adapter.wait_for_control(
+            window_id=window_id,
+            name=name,
+            automation_id=automation_id,
+            control_type=control_type,
+            state=state,
+            timeout_ms=timeout_ms,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4.1 — wait_for_idle
+    # ------------------------------------------------------------------
+
+    def wait_for_idle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Wait until the window's UI tree stops changing."""
+        window_id = self._required(payload, "window_id")
+        idle_ms = int(payload.get("idle_ms", 500))
+        timeout_ms = int(payload.get("timeout_ms", 10_000))
+        return self.adapter.wait_for_idle(
+            window_id=window_id,
+            idle_ms=idle_ms,
+            timeout_ms=timeout_ms,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4.2 — select_row, click_cell, read_cell, read_tree
+    # ------------------------------------------------------------------
+
+    def select_row(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Select a row in a DataGrid/ListView by text or index."""
+        control_id = self._required(payload, "control_id")
+        by_text = payload.get("by_text")
+        by_index = payload.get("by_index")
+        if by_index is not None:
+            by_index = int(by_index)
+        if by_text is None and by_index is None:
+            from desktop_mcp.errors import InvalidRequestError
+            raise InvalidRequestError(
+                "select_row requires either by_text or by_index"
+            )
+        return self.adapter.select_row(
+            control_id=control_id,
+            by_text=by_text,
+            by_index=by_index,
+        )
+
+    def click_cell(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Click a specific cell in a DataGrid by row and column index."""
+        return self.adapter.click_cell(
+            control_id=self._required(payload, "control_id"),
+            row=int(self._required(payload, "row")),
+            column=int(self._required(payload, "column")),
+        )
+
+    def read_cell(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Read the value of a specific cell in a DataGrid."""
+        return self.adapter.read_cell(
+            control_id=self._required(payload, "control_id"),
+            row=int(self._required(payload, "row")),
+            column=int(self._required(payload, "column")),
+        )
+
+    def read_tree(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Read a TreeView control as a nested structure."""
+        return self.adapter.read_tree(
+            control_id=self._required(payload, "control_id"),
+            max_depth=int(payload.get("max_depth", 4)),
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4.3 — list_dialogs
+    # ------------------------------------------------------------------
+
+    def list_dialogs(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return modal/popup windows owned by an application."""
+        application_id = self._required(payload, "application_id")
+        dialogs = self.adapter.list_dialogs(application_id)
+        return {"dialogs": dialogs, "count": len(dialogs)}
+
+    # ------------------------------------------------------------------
+    # Phase 4.4 — grounding tools
+    # ------------------------------------------------------------------
+
+    def get_foreground_window(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return the window_id and title of the current foreground window."""
+        return self.adapter.get_foreground_window()
+
+    def get_focused_control(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return the control that currently has keyboard focus."""
+        return self.adapter.get_focused_control(
+            self._required(payload, "window_id")
+        )
+
+    def health_check(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return diagnostic information about the MCP server environment."""
+        return self.adapter.health_check()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _interaction(
         self, action: str, payload: dict[str, Any], **kwargs: Any

@@ -1541,6 +1541,628 @@ class WindowsUIAutomationAdapter:
             raise DesktopMCPError(f"Failed to click at ({x}, {y}): {exc}") from exc
 
     # ------------------------------------------------------------------
+    # Phase 4.1 — wait_for_control
+    # ------------------------------------------------------------------
+
+    def wait_for_control(
+        self,
+        window_id: str,
+        name: str | None = None,
+        automation_id: str | None = None,
+        control_type: str | None = None,
+        state: str = "exists",
+        timeout_ms: int = 10_000,
+    ) -> dict:
+        """Poll until a control matching the criteria appears in *window_id*.
+
+        Parameters
+        ----------
+        name : str, optional
+            Case-insensitive substring match against control name.
+        automation_id : str, optional
+            Exact match against AutomationId.
+        control_type : str, optional
+            Exact match against control type (e.g. "Button").
+        state : "exists" | "enabled" | "visible"
+            Condition the control must satisfy.
+        timeout_ms : int
+            Maximum wait time in milliseconds (default 10 000).
+
+        Returns the matching control dict on success.
+        Raises ``ControlNotFoundError`` on timeout.
+        """
+        self._check_platform()
+        from desktop_mcp.errors import ControlNotFoundError
+
+        poll_interval = 0.25
+        deadline = time.perf_counter() + timeout_ms / 1000.0
+
+        while True:
+            try:
+                win = self.get_window(window_id)
+                flat: list[Control] = []
+
+                def _flatten(ctrls: list[Control]) -> None:
+                    for c in ctrls:
+                        flat.append(c)
+                        _flatten(c.children)
+
+                _flatten(win.controls)
+
+                for ctrl in flat:
+                    if name and name.lower() not in ctrl.name.lower():
+                        continue
+                    if automation_id and ctrl.automation_id != automation_id:
+                        continue
+                    if control_type and ctrl.type.lower() != control_type.lower():
+                        continue
+                    # State check
+                    if state == "enabled" and not ctrl.enabled:
+                        continue
+                    if state == "visible" and not ctrl.visible:
+                        continue
+                    return ctrl.to_dict()
+            except Exception:
+                pass
+
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            time.sleep(min(poll_interval, remaining))
+
+        criteria = []
+        if name:
+            criteria.append(f"name~'{name}'")
+        if automation_id:
+            criteria.append(f"automation_id='{automation_id}'")
+        if control_type:
+            criteria.append(f"type='{control_type}'")
+        raise ControlNotFoundError(
+            f"Control ({', '.join(criteria) or 'any'}) not found in window "
+            f"'{window_id}' within {timeout_ms} ms (state={state})"
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4.1 — wait_for_idle
+    # ------------------------------------------------------------------
+
+    def wait_for_idle(
+        self,
+        window_id: str,
+        idle_ms: int = 500,
+        timeout_ms: int = 10_000,
+    ) -> dict:
+        """Wait until the window's UI tree stops changing for *idle_ms* ms.
+
+        Strategy:
+        1. Call ``WaitForInputIdle`` on the process (Win32 apps only).
+        2. Poll the control count every 100 ms; when it hasn't changed for
+           *idle_ms* ms, declare idle.
+
+        Returns ``{"idle": true, "settled_ms": <actual settle time>}``.
+        Raises ``DesktopMCPError`` with code ``IDLE_TIMEOUT`` on timeout.
+        """
+        self._check_platform()
+        t0 = time.perf_counter()
+        deadline = t0 + timeout_ms / 1000.0
+        poll_interval = 0.1  # 100 ms
+
+        # Step 1: WaitForInputIdle (best-effort, Win32 only)
+        try:
+            win_wrapper = self._resolve_window(window_id)
+            pid = win_wrapper.process_id()
+            if ctypes_mod:
+                hproc = ctypes_mod.windll.kernel32.OpenProcess(
+                    0x00100000,  # SYNCHRONIZE
+                    False,
+                    pid,
+                )
+                if hproc:
+                    ctypes_mod.windll.user32.WaitForInputIdle(
+                        hproc, min(timeout_ms, 5000)
+                    )
+                    ctypes_mod.windll.kernel32.CloseHandle(hproc)
+        except Exception:
+            pass
+
+        # Step 2: tree-settle check
+        last_count: int | None = None
+        stable_since: float = time.perf_counter()
+
+        while True:
+            try:
+                win = self.get_window(window_id)
+                flat: list[Control] = []
+
+                def _flatten(ctrls: list[Control]) -> None:
+                    for c in ctrls:
+                        flat.append(c)
+                        _flatten(c.children)
+
+                _flatten(win.controls)
+                count = len(flat)
+            except Exception:
+                count = -1
+
+            now = time.perf_counter()
+            if count != last_count:
+                last_count = count
+                stable_since = now
+            elif (now - stable_since) * 1000 >= idle_ms:
+                settled_ms = int((now - t0) * 1000)
+                return {"idle": True, "settled_ms": settled_ms}
+
+            if now >= deadline:
+                break
+            time.sleep(min(poll_interval, deadline - now))
+
+        raise DesktopMCPError(
+            f"Window '{window_id}' did not become idle within {timeout_ms} ms",
+            details={"window_id": window_id, "timeout_ms": timeout_ms},
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4.2 — select_row, click_cell, read_cell, read_tree
+    # ------------------------------------------------------------------
+
+    def select_row(
+        self,
+        control_id: str,
+        by_text: str | None = None,
+        by_index: int | None = None,
+    ) -> dict:
+        """Select a row in a DataGrid/ListView by text match or zero-based index.
+
+        Tries ``SelectionItemPattern.Select()`` on the row element first;
+        falls back to ``click_input()`` if the pattern is unavailable.
+        """
+        self._check_platform()
+        el = self._resolve_control(control_id)
+
+        try:
+            rows = [
+                d for d in el.descendants()
+                if d.element_info.control_type in ("DataItem", "ListItem", "Row")
+            ]
+        except Exception as exc:
+            raise DesktopMCPError(f"Failed to enumerate rows: {exc}") from exc
+
+        if not rows:
+            raise ControlNotFoundError(f"No rows found in control {control_id}")
+
+        target_row = None
+        if by_index is not None:
+            if by_index < 0 or by_index >= len(rows):
+                raise ControlNotFoundError(
+                    f"Row index {by_index} out of range (0–{len(rows) - 1})"
+                )
+            target_row = rows[by_index]
+        elif by_text is not None:
+            for row in rows:
+                try:
+                    row_text = row.window_text() or row.element_info.name or ""
+                    if by_text.lower() in row_text.lower():
+                        target_row = row
+                        break
+                    # Also check cell text
+                    for cell in row.descendants():
+                        cell_text = cell.window_text() or cell.element_info.name or ""
+                        if by_text.lower() in cell_text.lower():
+                            target_row = row
+                            break
+                    if target_row:
+                        break
+                except Exception:
+                    continue
+
+        if target_row is None:
+            raise ControlNotFoundError(
+                f"Row matching {'index=' + str(by_index) if by_index is not None else 'text=' + repr(by_text)} "
+                f"not found in control {control_id}"
+            )
+
+        method = "click_input"
+        try:
+            if hasattr(target_row, "select"):
+                target_row.select()
+                method = "uia_select"
+            else:
+                target_row.click_input()
+        except Exception:
+            try:
+                target_row.click_input()
+                method = "click_input"
+            except Exception as exc:
+                raise DesktopMCPError(f"Failed to select row: {exc}") from exc
+
+        row_id = self._get_control_id(target_row)
+        return {
+            "control_id": control_id,
+            "row_control_id": row_id,
+            "method": method,
+            "row_index": rows.index(target_row),
+        }
+
+    def click_cell(self, control_id: str, row: int, column: int) -> dict:
+        """Click a specific cell in a DataGrid by zero-based row and column index."""
+        self._check_platform()
+        el = self._resolve_control(control_id)
+
+        try:
+            rows = [
+                d for d in el.descendants()
+                if d.element_info.control_type in ("DataItem", "Row")
+            ]
+        except Exception as exc:
+            raise DesktopMCPError(f"Failed to enumerate rows: {exc}") from exc
+
+        if row < 0 or row >= len(rows):
+            raise ControlNotFoundError(
+                f"Row {row} out of range (0–{len(rows) - 1})"
+            )
+
+        row_el = rows[row]
+        try:
+            cells = [
+                c for c in row_el.descendants()
+                if c.element_info.control_type in (
+                    "DataItem", "Text", "Edit", "CheckBox", "Custom"
+                )
+            ]
+        except Exception as exc:
+            raise DesktopMCPError(f"Failed to enumerate cells: {exc}") from exc
+
+        if column < 0 or column >= len(cells):
+            raise ControlNotFoundError(
+                f"Column {column} out of range (0–{len(cells) - 1})"
+            )
+
+        cell_el = cells[column]
+        method = "click_input"
+        try:
+            if hasattr(cell_el, "invoke"):
+                cell_el.invoke()
+                method = "uia_invoke"
+            else:
+                cell_el.click_input()
+        except Exception:
+            try:
+                cell_el.click_input()
+                method = "click_input"
+            except Exception as exc:
+                raise DesktopMCPError(f"Failed to click cell: {exc}") from exc
+
+        cell_id = self._get_control_id(cell_el)
+        return {
+            "control_id": control_id,
+            "cell_control_id": cell_id,
+            "row": row,
+            "column": column,
+            "method": method,
+        }
+
+    def read_cell(self, control_id: str, row: int, column: int) -> dict:
+        """Read the text value of a specific cell in a DataGrid."""
+        self._check_platform()
+        el = self._resolve_control(control_id)
+
+        try:
+            rows = [
+                d for d in el.descendants()
+                if d.element_info.control_type in ("DataItem", "Row")
+            ]
+        except Exception as exc:
+            raise DesktopMCPError(f"Failed to enumerate rows: {exc}") from exc
+
+        if row < 0 or row >= len(rows):
+            raise ControlNotFoundError(f"Row {row} out of range (0–{len(rows) - 1})")
+
+        row_el = rows[row]
+        try:
+            cells = [
+                c for c in row_el.descendants()
+                if c.element_info.control_type in (
+                    "DataItem", "Text", "Edit", "CheckBox", "Custom"
+                )
+            ]
+        except Exception as exc:
+            raise DesktopMCPError(f"Failed to enumerate cells: {exc}") from exc
+
+        if column < 0 or column >= len(cells):
+            raise ControlNotFoundError(
+                f"Column {column} out of range (0–{len(cells) - 1})"
+            )
+
+        cell_el = cells[column]
+        value = ""
+        try:
+            if hasattr(cell_el, "get_value"):
+                value = cell_el.get_value() or ""
+            if not value:
+                value = cell_el.window_text() or cell_el.element_info.name or ""
+        except Exception:
+            pass
+
+        return {
+            "control_id": control_id,
+            "row": row,
+            "column": column,
+            "value": value,
+        }
+
+    def read_tree(self, control_id: str, max_depth: int = 4) -> dict:
+        """Read a TreeView control as a nested dict structure.
+
+        Returns ``{"nodes": [...], "node_count": N}`` where each node has
+        ``name``, ``control_id``, ``expanded``, and ``children``.
+        """
+        self._check_platform()
+        el = self._resolve_control(control_id)
+
+        def _read_node(element: Any, depth: int) -> dict:
+            node_id = self._get_control_id(element)
+            self._controls_cache[node_id] = element
+            name = element.element_info.name or element.window_text() or ""
+            expanded = False
+            try:
+                if hasattr(element, "is_expanded"):
+                    expanded = bool(element.is_expanded())
+            except Exception:
+                pass
+
+            children_nodes = []
+            if depth < max_depth:
+                try:
+                    for child in element.children():
+                        if child.element_info.control_type in (
+                            "TreeItem", "TreeViewItem"
+                        ):
+                            children_nodes.append(_read_node(child, depth + 1))
+                except Exception:
+                    pass
+
+            return {
+                "name": name,
+                "control_id": node_id,
+                "expanded": expanded,
+                "children": children_nodes,
+            }
+
+        nodes = []
+        try:
+            for child in el.children():
+                if child.element_info.control_type in ("TreeItem", "TreeViewItem"):
+                    nodes.append(_read_node(child, 0))
+        except Exception as exc:
+            raise DesktopMCPError(f"Failed to read tree: {exc}") from exc
+
+        def _count(node_list: list) -> int:
+            total = 0
+            for n in node_list:
+                total += 1 + _count(n["children"])
+            return total
+
+        return {"nodes": nodes, "node_count": _count(nodes)}
+
+    # ------------------------------------------------------------------
+    # Phase 4.3 — list_dialogs
+    # ------------------------------------------------------------------
+
+    def list_dialogs(self, application_id: str) -> list[dict]:
+        """Return modal/popup windows owned by *application_id*.
+
+        A dialog is any top-level window whose owner is a window belonging
+        to the same process, or whose style includes WS_POPUP / WS_DLGFRAME.
+        """
+        self._check_platform()
+        try:
+            pid = (
+                int(application_id.split("_")[1])
+                if "_" in application_id
+                else int(application_id)
+            )
+        except (ValueError, IndexError) as exc:
+            raise DesktopMCPError(
+                f"Invalid application_id: {application_id}"
+            ) from exc
+
+        dialogs = []
+        try:
+            desktop = PyWinDesktop(backend="uia")
+            for win in desktop.windows():
+                try:
+                    win_pid = win.process_id()
+                    if win_pid != pid:
+                        continue
+                    title = win.window_text() or ""
+                    handle = win.handle
+                    window_id = f"win_{handle}"
+
+                    # Heuristic: dialog if it has a small bounding rect or
+                    # a title that suggests a dialog (OK/Cancel/Error/Warning)
+                    is_dialog = False
+                    try:
+                        rect = win.rectangle()
+                        w, h = rect.width(), rect.height()
+                        # Small window relative to typical app window
+                        if 0 < w < 800 and 0 < h < 600:
+                            is_dialog = True
+                        # Or check WS_POPUP style via GetWindowLong
+                        if win32gui and ctypes_mod:
+                            GWL_STYLE = -16
+                            WS_POPUP = 0x80000000
+                            style = ctypes_mod.windll.user32.GetWindowLongW(
+                                handle, GWL_STYLE
+                            )
+                            if style & WS_POPUP:
+                                is_dialog = True
+                    except Exception:
+                        pass
+
+                    if is_dialog:
+                        dialogs.append({
+                            "window_id": window_id,
+                            "title": title,
+                            "application_id": application_id,
+                        })
+                except Exception:
+                    continue
+        except Exception as exc:
+            raise DesktopMCPError(f"Failed to list dialogs: {exc}") from exc
+
+        return dialogs
+
+    # ------------------------------------------------------------------
+    # Phase 4.4 — get_foreground_window, get_focused_control, health_check
+    # ------------------------------------------------------------------
+
+    def get_foreground_window(self) -> dict:
+        """Return the window_id and title of the current foreground window."""
+        self._check_platform()
+        hwnd = _get_foreground_hwnd()
+        title = _get_foreground_title()
+        window_id = f"win_{hwnd}" if hwnd else ""
+        return {
+            "window_id": window_id,
+            "hwnd": hwnd,
+            "title": title,
+        }
+
+    def get_focused_control(self, window_id: str) -> dict:
+        """Return the control that currently has keyboard focus in *window_id*.
+
+        Uses ``GetFocusedElement`` from the UIA automation object.
+        Falls back to scanning the control tree for ``focused=True``.
+        """
+        self._check_platform()
+        try:
+            win_wrapper = self._resolve_window(window_id)
+            # Try UIA GetFocusedElement via pywinauto
+            try:
+                focused = win_wrapper.get_focus()
+                if focused:
+                    ctrl = self._map_control(focused)
+                    return {
+                        "window_id": window_id,
+                        "control_id": ctrl.id,
+                        "name": ctrl.name,
+                        "type": ctrl.type,
+                        "automation_id": ctrl.automation_id,
+                    }
+            except Exception:
+                pass
+
+            # Fallback: scan tree for focused=True
+            try:
+                win = self.get_window(window_id)
+                flat: list[Control] = []
+
+                def _flatten(ctrls: list[Control]) -> None:
+                    for c in ctrls:
+                        flat.append(c)
+                        _flatten(c.children)
+
+                _flatten(win.controls)
+                for ctrl in flat:
+                    if ctrl.focused:
+                        return {
+                            "window_id": window_id,
+                            "control_id": ctrl.id,
+                            "name": ctrl.name,
+                            "type": ctrl.type,
+                            "automation_id": ctrl.automation_id,
+                        }
+            except Exception:
+                pass
+
+            return {
+                "window_id": window_id,
+                "control_id": None,
+                "name": None,
+                "type": None,
+                "automation_id": None,
+            }
+        except WindowNotFoundError:
+            raise
+        except Exception as exc:
+            raise DesktopMCPError(
+                f"Failed to get focused control for {window_id}: {exc}"
+            ) from exc
+
+    def health_check(self) -> dict:
+        """Return diagnostic information about the MCP server environment.
+
+        Includes: Windows version, DPI awareness, UIA availability,
+        parent PID chain (so the agent knows what to exclude from clicks),
+        and library versions.
+        """
+        self._check_platform()
+        import platform
+
+        result: dict = {
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "uia_available": PyWinApplication is not None,
+            "parent_pid": os.getppid(),
+            "mcp_pid": os.getpid(),
+            "libraries": {},
+            "dpi_awareness": None,
+            "foreground_window": None,
+        }
+
+        # Library versions
+        try:
+            import pywinauto
+            result["libraries"]["pywinauto"] = pywinauto.__version__
+        except Exception:
+            result["libraries"]["pywinauto"] = "unavailable"
+
+        try:
+            import comtypes
+            result["libraries"]["comtypes"] = comtypes.__version__
+        except Exception:
+            result["libraries"]["comtypes"] = "unavailable"
+
+        try:
+            if psutil:
+                result["libraries"]["psutil"] = psutil.__version__
+        except Exception:
+            result["libraries"]["psutil"] = "unavailable"
+
+        # DPI awareness
+        try:
+            if ctypes_mod:
+                awareness = ctypes_mod.windll.user32.GetAwarenessFromDpiAwarenessContext(
+                    ctypes_mod.windll.user32.GetThreadDpiAwarenessContext()
+                )
+                result["dpi_awareness"] = awareness
+        except Exception:
+            pass
+
+        # Current foreground window
+        try:
+            result["foreground_window"] = self.get_foreground_window()
+        except Exception:
+            pass
+
+        # Parent PID chain (so agent knows what to exclude)
+        try:
+            if psutil:
+                chain = []
+                proc = psutil.Process(os.getpid())
+                while proc is not None:
+                    chain.append({"pid": proc.pid, "name": proc.name()})
+                    try:
+                        proc = proc.parent()
+                    except Exception:
+                        break
+                result["pid_chain"] = chain
+        except Exception:
+            result["pid_chain"] = []
+
+        return result
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

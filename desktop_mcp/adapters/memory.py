@@ -346,3 +346,204 @@ class InMemoryDesktopAdapter:
 
     def click_at(self, x: int, y: int, button: str = "left") -> dict:
         return {"x": x, "y": y, "button": button}
+
+    # ------------------------------------------------------------------
+    # Phase 4.1 — wait_for_control
+    # ------------------------------------------------------------------
+
+    def wait_for_control(
+        self,
+        window_id: str,
+        name: str | None = None,
+        automation_id: str | None = None,
+        control_type: str | None = None,
+        state: str = "exists",
+        timeout_ms: int = 10_000,
+    ) -> dict:
+        """Return the first matching control immediately (in-memory adapter)."""
+        window = self.get_window(window_id)
+        for ctrl in window.controls:
+            if name and name.lower() not in ctrl.name.lower():
+                continue
+            if automation_id and ctrl.automation_id != automation_id:
+                continue
+            if control_type and ctrl.type.lower() != control_type.lower():
+                continue
+            if state == "enabled" and not ctrl.enabled:
+                continue
+            if state == "visible" and not ctrl.visible:
+                continue
+            return ctrl.to_dict()
+        from desktop_mcp.errors import ControlNotFoundError
+        raise ControlNotFoundError(
+            f"Control not found in window '{window_id}' (state={state})"
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4.1 — wait_for_idle
+    # ------------------------------------------------------------------
+
+    def wait_for_idle(
+        self,
+        window_id: str,
+        idle_ms: int = 500,
+        timeout_ms: int = 10_000,
+    ) -> dict:
+        """In-memory adapter: always immediately idle."""
+        self.get_window(window_id)  # raises WindowNotFoundError if missing
+        return {"idle": True, "settled_ms": 0}
+
+    # ------------------------------------------------------------------
+    # Phase 4.2 — select_row, click_cell, read_cell, read_tree
+    # ------------------------------------------------------------------
+
+    def select_row(
+        self,
+        control_id: str,
+        by_text: str | None = None,
+        by_index: int | None = None,
+    ) -> dict:
+        """Select a row in the seeded DataGrid by text or index."""
+        control = self.get_control(control_id)
+        rows = control.metadata.get("rows", []) if control.metadata else []
+        if not rows:
+            from desktop_mcp.errors import ControlNotFoundError
+            raise ControlNotFoundError(f"No rows in control {control_id}")
+
+        if by_index is not None:
+            if by_index < 0 or by_index >= len(rows):
+                from desktop_mcp.errors import ControlNotFoundError
+                raise ControlNotFoundError(
+                    f"Row index {by_index} out of range (0–{len(rows) - 1})"
+                )
+            idx = by_index
+        elif by_text is not None:
+            idx = None
+            for i, row in enumerate(rows):
+                if any(by_text.lower() in str(v).lower() for v in row.values()):
+                    idx = i
+                    break
+            if idx is None:
+                from desktop_mcp.errors import ControlNotFoundError
+                raise ControlNotFoundError(
+                    f"Row with text '{by_text}' not found in control {control_id}"
+                )
+        else:
+            idx = 0
+
+        control.value = f"row_{idx}"
+        return {
+            "control_id": control_id,
+            "row_control_id": f"{control_id}_row_{idx}",
+            "method": "uia_select",
+            "row_index": idx,
+        }
+
+    def click_cell(self, control_id: str, row: int, column: int) -> dict:
+        """Click a cell in the seeded DataGrid."""
+        control = self.get_control(control_id)
+        rows = control.metadata.get("rows", []) if control.metadata else []
+        if row < 0 or row >= len(rows):
+            from desktop_mcp.errors import ControlNotFoundError
+            raise ControlNotFoundError(f"Row {row} out of range")
+        cols = list(rows[row].keys())
+        if column < 0 or column >= len(cols):
+            from desktop_mcp.errors import ControlNotFoundError
+            raise ControlNotFoundError(f"Column {column} out of range")
+        return {
+            "control_id": control_id,
+            "cell_control_id": f"{control_id}_r{row}_c{column}",
+            "row": row,
+            "column": column,
+            "method": "click_input",
+        }
+
+    def read_cell(self, control_id: str, row: int, column: int) -> dict:
+        """Read a cell value from the seeded DataGrid."""
+        control = self.get_control(control_id)
+        rows = control.metadata.get("rows", []) if control.metadata else []
+        if row < 0 or row >= len(rows):
+            from desktop_mcp.errors import ControlNotFoundError
+            raise ControlNotFoundError(f"Row {row} out of range")
+        cols = list(rows[row].keys())
+        if column < 0 or column >= len(cols):
+            from desktop_mcp.errors import ControlNotFoundError
+            raise ControlNotFoundError(f"Column {column} out of range")
+        value = str(rows[row][cols[column]])
+        return {"control_id": control_id, "row": row, "column": column, "value": value}
+
+    def read_tree(self, control_id: str, max_depth: int = 4) -> dict:
+        """Return an empty tree (no TreeView in the seeded data)."""
+        self.get_control(control_id)  # raises if missing
+        return {"nodes": [], "node_count": 0}
+
+    # ------------------------------------------------------------------
+    # Phase 4.3 — list_dialogs
+    # ------------------------------------------------------------------
+
+    def list_dialogs(self, application_id: str) -> list[dict]:
+        """Return any windows belonging to the application that look like dialogs."""
+        dialogs = []
+        for win in self._windows.values():
+            if win.application_id != application_id:
+                continue
+            # Heuristic: title contains common dialog keywords
+            title_lower = win.title.lower()
+            if any(kw in title_lower for kw in ("error", "warning", "confirm", "dialog", "alert")):
+                dialogs.append({
+                    "window_id": win.window_id,
+                    "title": win.title,
+                    "application_id": application_id,
+                })
+        return dialogs
+
+    # ------------------------------------------------------------------
+    # Phase 4.4 — grounding tools
+    # ------------------------------------------------------------------
+
+    def get_foreground_window(self) -> dict:
+        """Return the active window (in-memory: the first active window)."""
+        for win in self._windows.values():
+            if win.active:
+                return {
+                    "window_id": win.window_id,
+                    "hwnd": 0,
+                    "title": win.title,
+                }
+        return {"window_id": "", "hwnd": 0, "title": ""}
+
+    def get_focused_control(self, window_id: str) -> dict:
+        """Return the focused control in the window (in-memory: first focused)."""
+        window = self.get_window(window_id)
+        for ctrl in window.controls:
+            if ctrl.focused:
+                return {
+                    "window_id": window_id,
+                    "control_id": ctrl.id,
+                    "name": ctrl.name,
+                    "type": ctrl.type,
+                    "automation_id": ctrl.automation_id,
+                }
+        return {
+            "window_id": window_id,
+            "control_id": None,
+            "name": None,
+            "type": None,
+            "automation_id": None,
+        }
+
+    def health_check(self) -> dict:
+        """Return a minimal health check result for the in-memory adapter."""
+        import os
+        import platform
+        return {
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "uia_available": False,
+            "parent_pid": os.getppid(),
+            "mcp_pid": os.getpid(),
+            "libraries": {"pywinauto": "n/a (in-memory adapter)"},
+            "dpi_awareness": None,
+            "foreground_window": self.get_foreground_window(),
+            "pid_chain": [],
+        }

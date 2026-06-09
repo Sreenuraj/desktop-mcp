@@ -12,6 +12,9 @@ Covers the scenarios that matter for an LLM agent driving desktop apps:
 - Errors carry isError: true and a structured error envelope
 - Evidence: capture_window, generate_report
 - Adapter selection: UIA on Windows, InMemory elsewhere
+- Phase 4: wait_for_control, wait_for_idle, select_row, click_cell,
+  read_cell, read_tree, list_dialogs, get_foreground_window,
+  get_focused_control, health_check
 """
 
 from __future__ import annotations
@@ -115,7 +118,6 @@ def test_activate_window_returns_observable_state():
     resp = server.call_tool("activate_window", {"session_id": sid, "window_id": "win_demo"})
     data = resp["data"]
     assert resp["success"] is True
-    # Agent needs these fields to decide whether to retry
     assert data["window_id"] == "win_demo"
     assert "is_foreground" in data
     assert "became_foreground" in data
@@ -153,9 +155,7 @@ def test_wait_for_window_timeout_returns_window_not_found():
 
 def test_click_returns_action_metadata():
     server, sid = _server()
-    resp = server.call_tool(
-        "click", {"session_id": sid, "control_id": "btn_save"}
-    )
+    resp = server.call_tool("click", {"session_id": sid, "control_id": "btn_save"})
     assert resp["success"] is True
     data = resp["data"]
     assert data["action"] in ("left", "click")
@@ -177,7 +177,6 @@ def test_enter_text_updates_control_value():
 
 def test_click_disabled_control_returns_error():
     server, sid = _server()
-    # Disable the control first
     server.adapter._controls["btn_save"].enabled = False
     resp = server.call_tool("click", {"session_id": sid, "control_id": "btn_save"})
     assert resp["success"] is False
@@ -229,7 +228,6 @@ def test_desktop_snapshot_returns_all_windows_with_controls():
 
 def test_capture_window_saves_artifact(tmp_path):
     server, sid = _server()
-    # Override evidence dir to tmp_path
     with mock.patch.dict(os.environ, {"DESKTOP_MCP_EVIDENCE_DIR": str(tmp_path)}):
         resp = server.call_tool("capture_window", {"session_id": sid, "window_id": "win_demo"})
     assert resp["success"] is True
@@ -238,7 +236,6 @@ def test_capture_window_saves_artifact(tmp_path):
 
 def test_generate_report_creates_markdown(tmp_path):
     server, sid = _server()
-    # Do something so the log has entries
     server.call_tool("window_snapshot", {"session_id": sid, "window_id": "win_demo"})
     with mock.patch.dict(os.environ, {"DESKTOP_MCP_EVIDENCE_DIR": str(tmp_path)}):
         resp = server.call_tool("generate_report", {"session_id": sid})
@@ -264,3 +261,240 @@ def test_explicit_memory_adapter_env(monkeypatch):
     monkeypatch.setenv("DESKTOP_MCP_ADAPTER", "memory")
     server = DesktopMCPServer()
     assert isinstance(server.adapter, InMemoryDesktopAdapter)
+
+
+# ===========================================================================
+# Phase 4.1 — Waiters
+# ===========================================================================
+
+def test_wait_for_control_finds_existing_control():
+    """wait_for_control returns the control immediately when it already exists."""
+    server, sid = _server()
+    resp = server.call_tool(
+        "wait_for_control",
+        {"session_id": sid, "window_id": "win_demo", "name": "Save"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["id"] == "btn_save"
+
+
+def test_wait_for_control_by_automation_id():
+    server, sid = _server()
+    resp = server.call_tool(
+        "wait_for_control",
+        {"session_id": sid, "window_id": "win_demo", "automation_id": "txtCustomer"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["id"] == "txt_customer"
+
+
+def test_wait_for_control_by_type():
+    server, sid = _server()
+    resp = server.call_tool(
+        "wait_for_control",
+        {"session_id": sid, "window_id": "win_demo", "control_type": "Button"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["type"] == "Button"
+
+
+def test_wait_for_control_not_found_returns_error():
+    server, sid = _server()
+    resp = server.call_tool(
+        "wait_for_control",
+        {"session_id": sid, "window_id": "win_demo", "name": "NonExistentXYZ", "timeout_ms": 50},
+    )
+    assert resp["success"] is False
+    assert resp["isError"] is True
+    assert resp["error"]["code"] == "CONTROL_NOT_FOUND"
+
+
+def test_wait_for_control_requires_at_least_one_criterion():
+    server, sid = _server()
+    resp = server.call_tool(
+        "wait_for_control",
+        {"session_id": sid, "window_id": "win_demo"},
+    )
+    assert resp["success"] is False
+    assert resp["isError"] is True
+    assert resp["error"]["code"] == "INVALID_REQUEST"
+
+
+def test_wait_for_idle_returns_idle_true():
+    """In-memory adapter is always immediately idle."""
+    server, sid = _server()
+    resp = server.call_tool(
+        "wait_for_idle",
+        {"session_id": sid, "window_id": "win_demo"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["idle"] is True
+    assert isinstance(resp["data"]["settled_ms"], int)
+
+
+# ===========================================================================
+# Phase 4.2 — Richer control kinds
+# ===========================================================================
+
+def test_select_row_by_index():
+    server, sid = _server()
+    resp = server.call_tool(
+        "select_row",
+        {"session_id": sid, "control_id": "grid_customers", "by_index": 0},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["row_index"] == 0
+
+
+def test_select_row_by_text():
+    server, sid = _server()
+    resp = server.call_tool(
+        "select_row",
+        {"session_id": sid, "control_id": "grid_customers", "by_text": "Jane"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["row_index"] == 0
+
+
+def test_select_row_out_of_range_returns_error():
+    server, sid = _server()
+    resp = server.call_tool(
+        "select_row",
+        {"session_id": sid, "control_id": "grid_customers", "by_index": 99},
+    )
+    assert resp["success"] is False
+    assert resp["isError"] is True
+    assert resp["error"]["code"] == "CONTROL_NOT_FOUND"
+
+
+def test_click_cell_returns_cell_info():
+    server, sid = _server()
+    resp = server.call_tool(
+        "click_cell",
+        {"session_id": sid, "control_id": "grid_customers", "row": 0, "column": 0},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["row"] == 0
+    assert resp["data"]["column"] == 0
+    assert "cell_control_id" in resp["data"]
+
+
+def test_read_cell_returns_value():
+    server, sid = _server()
+    resp = server.call_tool(
+        "read_cell",
+        {"session_id": sid, "control_id": "grid_customers", "row": 0, "column": 0},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["value"] == "Jane Doe"
+
+
+def test_read_cell_second_column():
+    server, sid = _server()
+    resp = server.call_tool(
+        "read_cell",
+        {"session_id": sid, "control_id": "grid_customers", "row": 1, "column": 1},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["value"] == "Approved"
+
+
+def test_read_tree_returns_nodes_structure():
+    server, sid = _server()
+    resp = server.call_tool(
+        "read_tree",
+        {"session_id": sid, "control_id": "grid_customers"},
+    )
+    assert resp["success"] is True
+    assert "nodes" in resp["data"]
+    assert "node_count" in resp["data"]
+    assert isinstance(resp["data"]["nodes"], list)
+
+
+# ===========================================================================
+# Phase 4.3 — Dialog awareness
+# ===========================================================================
+
+def test_list_dialogs_returns_empty_when_no_dialogs():
+    server, sid = _server()
+    resp = server.call_tool(
+        "list_dialogs",
+        {"session_id": sid, "application_id": "app_demo"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["count"] == 0
+    assert resp["data"]["dialogs"] == []
+
+
+def test_list_dialogs_finds_error_window():
+    """A window with 'error' in the title should be detected as a dialog."""
+    server, sid = _server()
+    from desktop_mcp.models.window import Window
+    error_win = Window(
+        window_id="win_err",
+        application_id="app_demo",
+        title="Error: Login Failed",
+        active=False,
+    )
+    server.adapter._windows["win_err"] = error_win
+
+    resp = server.call_tool(
+        "list_dialogs",
+        {"session_id": sid, "application_id": "app_demo"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["count"] == 1
+    assert resp["data"]["dialogs"][0]["window_id"] == "win_err"
+
+
+# ===========================================================================
+# Phase 4.4 — Grounding tools
+# ===========================================================================
+
+def test_get_foreground_window_returns_active_window():
+    server, sid = _server()
+    resp = server.call_tool("get_foreground_window", {"session_id": sid})
+    assert resp["success"] is True
+    data = resp["data"]
+    assert "window_id" in data
+    assert "title" in data
+    assert "hwnd" in data
+    # In-memory adapter: win_demo is active
+    assert data["window_id"] == "win_demo"
+
+
+def test_get_focused_control_returns_none_when_nothing_focused():
+    server, sid = _server()
+    resp = server.call_tool(
+        "get_focused_control",
+        {"session_id": sid, "window_id": "win_demo"},
+    )
+    assert resp["success"] is True
+    data = resp["data"]
+    assert data["window_id"] == "win_demo"
+    assert data["control_id"] is None
+
+
+def test_get_focused_control_returns_focused_control():
+    server, sid = _server()
+    # Focus a control
+    server.adapter._controls["txt_customer"].focused = True
+    resp = server.call_tool(
+        "get_focused_control",
+        {"session_id": sid, "window_id": "win_demo"},
+    )
+    assert resp["success"] is True
+    assert resp["data"]["control_id"] == "txt_customer"
+
+
+def test_health_check_returns_environment_info():
+    server, sid = _server()
+    resp = server.call_tool("health_check", {"session_id": sid})
+    assert resp["success"] is True
+    data = resp["data"]
+    assert "platform" in data
+    assert "python_version" in data
+    assert "uia_available" in data
+    assert "mcp_pid" in data
+    assert "libraries" in data
+    assert "foreground_window" in data

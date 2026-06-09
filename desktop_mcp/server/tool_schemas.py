@@ -482,4 +482,242 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
+    # ------------------------------------------------------------------ #
+    # Phase 4.1 — Waiters
+    # ------------------------------------------------------------------ #
+    "wait_for_control": {
+        "description": (
+            "Poll until a control matching the given criteria appears in a window. "
+            "Polls every 250 ms up to timeout_ms (default 10 000 ms). "
+            "At least one of name, automation_id, or control_type must be provided. "
+            "Use state='enabled' to wait until the control is interactive, "
+            "or state='visible' to wait until it is visible. "
+            "Returns the matching control dict on success. "
+            "On timeout returns isError: true with code CONTROL_NOT_FOUND. "
+            "Use this after click/enter_text to wait for the next screen to load."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "window_id": {"type": "string", "description": "Window to search in."},
+                "name": {
+                    "type": "string",
+                    "description": "Case-insensitive substring to match against control name.",
+                },
+                "automation_id": {
+                    "type": "string",
+                    "description": "Exact AutomationId to match.",
+                },
+                "control_type": {
+                    "type": "string",
+                    "description": "Control type to match, e.g. 'Button', 'Edit'.",
+                },
+                "state": {
+                    "type": "string",
+                    "enum": ["exists", "enabled", "visible"],
+                    "description": "Condition the control must satisfy. Default: 'exists'.",
+                    "default": "exists",
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Maximum wait time in milliseconds. Default: 10000.",
+                    "default": 10000,
+                },
+            },
+            "required": ["session_id", "window_id"],
+            "additionalProperties": False,
+        },
+    },
+    "wait_for_idle": {
+        "description": (
+            "Wait until the window's UI tree stops changing for idle_ms milliseconds. "
+            "Uses WaitForInputIdle (Win32) + tree-settle check. "
+            "Returns: idle (true), settled_ms. "
+            "Use this after actions that trigger loading/navigation to ensure the UI "
+            "has finished updating before taking a snapshot. "
+            "On timeout returns isError: true with code INTERNAL_ERROR."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "window_id": {"type": "string", "description": "Window to wait on."},
+                "idle_ms": {
+                    "type": "integer",
+                    "description": "How long the tree must be stable (ms). Default: 500.",
+                    "default": 500,
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Maximum wait time in milliseconds. Default: 10000.",
+                    "default": 10000,
+                },
+            },
+            "required": ["session_id", "window_id"],
+            "additionalProperties": False,
+        },
+    },
+    # ------------------------------------------------------------------ #
+    # Phase 4.2 — Richer control kinds
+    # ------------------------------------------------------------------ #
+    "select_row": {
+        "description": (
+            "Select a row in a DataGrid or ListView by text match or zero-based index. "
+            "Provide either by_text (case-insensitive substring) or by_index. "
+            "Returns: control_id, row_control_id, method, row_index. "
+            "On error returns isError: true with code CONTROL_NOT_FOUND."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "control_id": {"type": "string", "description": "DataGrid/ListView control ID."},
+                "by_text": {
+                    "type": "string",
+                    "description": "Case-insensitive text to search for in any cell of the row.",
+                },
+                "by_index": {
+                    "type": "integer",
+                    "description": "Zero-based row index.",
+                },
+            },
+            "required": ["session_id", "control_id"],
+            "additionalProperties": False,
+        },
+    },
+    "click_cell": {
+        "description": (
+            "Click a specific cell in a DataGrid by zero-based row and column index. "
+            "Returns: control_id, cell_control_id, row, column, method. "
+            "On error returns isError: true with code CONTROL_NOT_FOUND."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "control_id": {"type": "string", "description": "DataGrid control ID."},
+                "row": {"type": "integer", "description": "Zero-based row index."},
+                "column": {"type": "integer", "description": "Zero-based column index."},
+            },
+            "required": ["session_id", "control_id", "row", "column"],
+            "additionalProperties": False,
+        },
+    },
+    "read_cell": {
+        "description": (
+            "Read the text value of a specific cell in a DataGrid. "
+            "Returns: control_id, row, column, value."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "control_id": {"type": "string", "description": "DataGrid control ID."},
+                "row": {"type": "integer", "description": "Zero-based row index."},
+                "column": {"type": "integer", "description": "Zero-based column index."},
+            },
+            "required": ["session_id", "control_id", "row", "column"],
+            "additionalProperties": False,
+        },
+    },
+    "read_tree": {
+        "description": (
+            "Read a TreeView control as a nested structure. "
+            "Returns: nodes (list of {name, control_id, expanded, children}), node_count. "
+            "Use max_depth to limit traversal depth (default 4)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "control_id": {"type": "string", "description": "TreeView control ID."},
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum depth to traverse. Default: 4.",
+                    "default": 4,
+                },
+            },
+            "required": ["session_id", "control_id"],
+            "additionalProperties": False,
+        },
+    },
+    # ------------------------------------------------------------------ #
+    # Phase 4.3 — Dialog awareness
+    # ------------------------------------------------------------------ #
+    "list_dialogs": {
+        "description": (
+            "Return modal/popup windows owned by an application. "
+            "Returns: dialogs (list of {window_id, title, application_id}), count. "
+            "Use this after actions that might trigger error dialogs, confirmations, "
+            "or login prompts. If count > 0, handle the dialog before continuing. "
+            "Mirrors how Playwright reports new pages after navigation."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "application_id": {
+                    "type": "string",
+                    "description": "Application to check for dialogs.",
+                },
+            },
+            "required": ["session_id", "application_id"],
+            "additionalProperties": False,
+        },
+    },
+    # ------------------------------------------------------------------ #
+    # Phase 4.4 — Grounding tools
+    # ------------------------------------------------------------------ #
+    "get_foreground_window": {
+        "description": (
+            "Return the window_id, hwnd, and title of the current foreground window. "
+            "Use this to verify which window has focus before an interaction, "
+            "or to confirm that restore_foreground_after_action worked correctly. "
+            "Returns: window_id, hwnd, title."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+            },
+            "required": ["session_id"],
+            "additionalProperties": False,
+        },
+    },
+    "get_focused_control": {
+        "description": (
+            "Return the control that currently has keyboard focus in a window. "
+            "Returns: window_id, control_id, name, type, automation_id. "
+            "control_id will be null if no control has focus. "
+            "Use this to verify that a text field received focus before typing."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+                "window_id": {"type": "string", "description": "Window to inspect."},
+            },
+            "required": ["session_id", "window_id"],
+            "additionalProperties": False,
+        },
+    },
+    "health_check": {
+        "description": (
+            "Return diagnostic information about the MCP server environment. "
+            "Includes: platform, python_version, uia_available, parent_pid, mcp_pid, "
+            "libraries (pywinauto/comtypes/psutil versions), dpi_awareness, "
+            "foreground_window, pid_chain. "
+            "Use this at the start of a session to verify the environment is healthy "
+            "and to learn which PIDs to exclude from click targets."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID."},
+            },
+            "required": ["session_id"],
+            "additionalProperties": False,
+        },
+    },
 }
