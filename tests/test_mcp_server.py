@@ -42,43 +42,6 @@ def test_window_snapshot_returns_controls():
     assert any(control["id"] == "btn_save" for control in response["data"]["controls"])
 
 
-def test_find_control_and_text_round_trip():
-    server, session_id = new_server()
-    found = server.call_tool(
-        "find_control",
-        {"session_id": session_id, "window_id": "win_demo", "text": "Customer"},
-    )
-    control_id = found["data"]["control"]["id"]
-
-    enter = server.call_tool(
-        "enter_text",
-        {"session_id": session_id, "control_id": control_id, "value": "John Doe"},
-    )
-    read = server.call_tool(
-        "read_text", {"session_id": session_id, "control_id": control_id}
-    )
-
-    assert enter["success"] is True
-    assert read["data"]["value"] == "John Doe"
-
-
-def test_grid_find_row_uses_zero_based_row_index():
-    server, session_id = new_server()
-
-    response = server.call_tool(
-        "find_row",
-        {
-            "session_id": session_id,
-            "control_id": "grid_customers",
-            "criteria": {"Name": "John Doe"},
-        },
-    )
-
-    assert response["success"] is True
-    assert response["data"]["row_index"] == 1
-    assert response["data"]["row"]["Status"] == "Approved"
-
-
 def test_assert_text_failure_returns_invalid_request():
     server, session_id = new_server()
 
@@ -118,29 +81,4 @@ def test_click_at():
     assert response["data"]["button"] == "right"
 
 
-def test_restore_window():
-    server, session_id = new_server()
 
-    response = server.call_tool(
-        "restore_window",
-        {"session_id": session_id, "window_id": "win_demo"},
-    )
-
-    assert response["success"] is True
-    assert response["data"] == {}
-
-
-def test_screenshot_highlighting():
-    server, session_id = new_server()
-
-    response = server.call_tool(
-        "capture_window",
-        {
-            "session_id": session_id,
-            "window_id": "win_demo",
-            "highlight_rect": [10, 20, 100, 200],
-        },
-    )
-
-    assert response["success"] is True
-    assert "artifact" in response["data"]

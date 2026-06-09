@@ -196,7 +196,7 @@ If your agent runs inside a virtual environment, point the command to that envir
 
 ## Tool Categories
 
-The server exposes the following toolsets:
+The server exposes the following refined, highly-capable core tools (18 tools):
 
 ### 1. Sessions
 - `create_session`: Creates a new session ID.
@@ -212,32 +212,25 @@ The server exposes the following toolsets:
 - `activate_window`: Brings the window into focus.
 - `wait_for_window`: Wait for a window with matching title to open.
 - `close_window`: Closes the target window.
-- `maximize_window` / `minimize_window`: Resize the window.
 
 ### 4. Snapshots & Discovery
-- `desktop_snapshot` / `window_snapshot`: Returns details and flat control lists.
+- `window_snapshot`: **[Core Discovery]** Returns a flat list of all interactive controls.
 - `control_tree`: Returns recursive, hierarchical control nodes.
-- `find_control` / `find_controls` / `get_control`: Inspect and locate UI elements.
 
 ### 5. Interactions
-- `click` / `double_click` / `right_click` / `hover` / `focus`: Mouse and focus actions.
-- `enter_text` / `append_text` / `clear_text` / `read_text`: Keyboard and input actions.
-- `select_dropdown` / `select_tab` / `select_radio` / `check` / `uncheck`: Selection widgets.
+- `click`: Interact with any element. Accepts an `action` argument (`left`, `right`, `double`, `hover`) and intelligently handles checkboxes, tabs, and tree nodes.
+- `enter_text` / `read_text`: Safely input or extract text.
+- `press_keys`: **[NEW]** Send raw PyWinAuto keys (e.g., `{TAB}`, `^c`) to the active window. Extremely crucial for legacy app support.
+- `select_item`: Direct API for picking items from Dropdowns/ComboBoxes/ListBoxes.
+- `drag_drop`: Drag and drop from one control to another.
 
-### 6. Validation
-- `control_exists` / `wait_for_control`: Verification & wait methods.
-- `assert_text` / `assert_control_state`: Check values. (Captures a screenshot automatically on failure).
+### 6. Grids
+- `read_table`: Returns columns and rows from a DataGrid.
 
-### 7. Grids
-- `read_table`: Returns columns and rows from a grid.
-- `find_row`: Searches a grid row matching criteria.
-- `select_row`: Selects the row at `row_index`.
-- `edit_cell` / `read_cell`: Modifies or reads a specific cell value.
-
-### 8. Evidence & Browser Authentication
-- `capture_window` / `capture_desktop`: Screengrabs.
+### 7. Evidence & Reporting
+- `capture_window` / `capture_desktop`: High-resolution screengrabs.
 - `start_recording` / `stop_recording`: Capture video evidence of workflows.
-- `wait_for_browser` / `attach_browser_window`: Bypasses OAuth/SSO login screens by switching control.
+- `generate_report`: Generates a Markdown audit log of the session.
 
 ---
 

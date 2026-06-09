@@ -87,42 +87,6 @@ def test_interact_click_input_used_when_invoke_missing(adapter):
     el.click_input.assert_called_once()
 
 
-def test_interact_double_click(adapter):
-    el = MockInteractiveElement()
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("double_click", "ctrl_123")
-    el.double_click_input.assert_called_once()
-
-
-def test_interact_double_click_fallback_when_missing(adapter):
-    el = MockInteractiveElement()
-    del el.double_click_input
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("double_click", "ctrl_123")
-    assert el.click_input.call_count == 2
-
-
-def test_interact_right_click_and_hover(adapter):
-    el = MockInteractiveElement()
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("right_click", "ctrl_123")
-    el.right_click_input.assert_called_once()
-
-    adapter.interact("hover", "ctrl_123")
-    el.move_mouse_input.assert_called_once()
-
-
-def test_interact_focus(adapter):
-    el = MockInteractiveElement()
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("focus", "ctrl_123")
-    el.set_focus.assert_called_once()
-
-
 def test_interact_enter_text_value_pattern(adapter):
     el = MockInteractiveElement(control_type="Edit")
     el.set_edit_text = mock.Mock()
@@ -139,48 +103,6 @@ def test_interact_enter_text_fallback(adapter):
 
     adapter.interact("enter_text", "ctrl_123", value="Hello")
     el.type_keys.assert_called_once_with("Hello", with_spaces=True, with_tabs=True)
-
-
-def test_interact_append_text(adapter):
-    el = MockInteractiveElement(control_type="Edit")
-    el.set_edit_text = mock.Mock()
-    el.get_value = mock.Mock(return_value="Existing ")
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("append_text", "ctrl_123", value="New")
-    el.get_value.assert_called_once()
-    el.set_edit_text.assert_called_once_with("Existing New")
-
-
-def test_interact_clear_text(adapter):
-    el = MockInteractiveElement(control_type="Edit")
-    el.set_edit_text = mock.Mock()
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("clear_text", "ctrl_123")
-    el.set_edit_text.assert_called_once_with("")
-
-
-def test_interact_checkbox_toggle(adapter):
-    el = MockInteractiveElement(control_type="CheckBox")
-    el.check = mock.Mock()
-    el.uncheck = mock.Mock()
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("check", "ctrl_123")
-    el.check.assert_called_once()
-
-    adapter.interact("uncheck", "ctrl_123")
-    el.uncheck.assert_called_once()
-
-
-def test_interact_dropdown_selection(adapter):
-    el = MockInteractiveElement(control_type="ComboBox")
-    el.select = mock.Mock()
-    adapter._resolve_control = mock.Mock(return_value=el)
-
-    adapter.interact("select_dropdown", "ctrl_123", value="Option B")
-    el.select.assert_called_once_with("Option B")
 
 
 def test_interact_unsupported_action(adapter):

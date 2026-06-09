@@ -355,13 +355,18 @@ class WindowsUIAutomationAdapter:
                 import ctypes
                 import win32gui
                 import win32con
+                import time
 
                 win32gui.ShowWindow(handle, win32con.SW_SHOW)
-                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
-                win32gui.SetForegroundWindow(handle)
-                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
-                import time
-                time.sleep(0.15)
+                
+                # Robust retry loop to bypass focus stealing
+                for _ in range(10):
+                    if win32gui.GetForegroundWindow() == handle:
+                        break
+                    ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+                    win32gui.SetForegroundWindow(handle)
+                    ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
+                    time.sleep(0.15)
 
                 if hasattr(win_wrapper, "set_focus"):
                     win_wrapper.set_focus()
@@ -519,6 +524,14 @@ class WindowsUIAutomationAdapter:
 
     def interact(self, action: str, control_id: str, **kwargs: Any) -> dict:
         self._check_platform()
+        
+        # If no control ID is provided and the action is press_keys on the active window
+        if not control_id and action == "press_keys":
+            import pywinauto.keyboard
+            keys = kwargs.get("keys", "")
+            pywinauto.keyboard.send_keys(keys, with_spaces=True, with_tabs=True)
+            return {"action": action, "control_id": control_id}
+            
         el = self._resolve_control(control_id)
         if not el.is_enabled():
             raise ControlDisabledError(f"Control is disabled: {control_id}")
@@ -537,55 +550,56 @@ class WindowsUIAutomationAdapter:
                         import ctypes
                         import win32gui
                         import win32con
+                        import time
 
-                        # Ensure the window is shown and not hidden/minimized
                         win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
 
-                        # Simulating Alt Down/Up key events bypasses Windows SetForegroundWindow restrictions
-                        ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)  # Alt key down
-                        win32gui.SetForegroundWindow(hwnd)
-                        ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)  # Alt key up
-
-                        import time
-                        time.sleep(0.1)
+                        # Robust retry loop
+                        for _ in range(10):
+                            if win32gui.GetForegroundWindow() == hwnd:
+                                break
+                            ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+                            win32gui.SetForegroundWindow(hwnd)
+                            ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
+                            time.sleep(0.15)
 
                     if hasattr(parent, "set_focus"):
                         parent.set_focus()
             except Exception:
                 pass
 
-        # Always bring the target window to the foreground and set focus before executing the interaction.
-        # This prevents the application window from losing focus when users approve tool execution
-        # in VS Code/Cursor.
         ensure_focus()
 
         try:
-            if action == "click":
+            if action in ("left", "click"):
                 if hasattr(el, "invoke") and el.element_info.control_type == "Button":
                     try:
                         el.invoke()
                     except Exception:
                         ensure_focus()
                         el.click_input()
+                elif hasattr(el, "select") and el.element_info.control_type in ("ListItem", "MenuItem", "TabItem", "RadioButton", "TreeViewItem"):
+                    try:
+                        el.select()
+                    except Exception:
+                        ensure_focus()
+                        el.click_input()
                 else:
                     ensure_focus()
                     el.click_input()
-            elif action == "double_click":
+            elif action == "double":
                 ensure_focus()
                 if hasattr(el, "double_click_input"):
                     el.double_click_input()
                 else:
                     el.click_input()
                     el.click_input()
-            elif action == "right_click":
+            elif action == "right":
                 ensure_focus()
                 el.right_click_input()
             elif action == "hover":
                 ensure_focus()
                 el.move_mouse_input()
-            elif action == "focus":
-                ensure_focus()
-                el.set_focus()
             elif action == "enter_text":
                 val = kwargs.get("value", "")
                 if hasattr(el, "set_edit_text"):
@@ -597,44 +611,14 @@ class WindowsUIAutomationAdapter:
                 else:
                     ensure_focus()
                     el.type_keys(val, with_spaces=True, with_tabs=True)
-            elif action == "append_text":
-                val = kwargs.get("value", "")
-                existing = ""
-                try:
-                    if hasattr(el, "get_value"):
-                        existing = el.get_value() or ""
-                    else:
-                        existing = el.window_text() or ""
-                except Exception:
-                    pass
-                if hasattr(el, "set_edit_text"):
-                    try:
-                        el.set_edit_text(existing + val)
-                    except Exception:
-                        ensure_focus()
-                        el.type_keys(val, with_spaces=True, with_tabs=True)
-                else:
-                    ensure_focus()
-                    el.type_keys(val, with_spaces=True, with_tabs=True)
-            elif action == "clear_text":
-                if hasattr(el, "set_edit_text"):
-                    try:
-                        el.set_edit_text("")
-                    except Exception:
-                        ensure_focus()
-                        el.type_keys("^a{BACKSPACE}")
-                else:
-                    ensure_focus()
-                    el.type_keys("^a{BACKSPACE}")
-            elif action in ("select_dropdown", "select_tab", "select_radio", "check"):
-                val = str(kwargs.get("value", "true"))
-                if action == "check" and hasattr(el, "check"):
-                    try:
-                        el.check()
-                    except Exception:
-                        ensure_focus()
-                        el.click_input()
-                elif hasattr(el, "select"):
+            elif action == "press_keys":
+                val = kwargs.get("keys", "")
+                ensure_focus()
+                el.set_focus()
+                el.type_keys(val, with_spaces=True, with_tabs=True)
+            elif action == "select_item":
+                val = str(kwargs.get("value", ""))
+                if hasattr(el, "select"):
                     try:
                         el.select(val)
                     except Exception:
@@ -643,111 +627,6 @@ class WindowsUIAutomationAdapter:
                 else:
                     ensure_focus()
                     el.click_input()
-            elif action == "uncheck":
-                if hasattr(el, "uncheck"):
-                    try:
-                        el.uncheck()
-                    except Exception:
-                        ensure_focus()
-                        el.click_input()
-                else:
-                    ensure_focus()
-                    el.click_input()
-            elif action == "select_row":
-                row_index = int(kwargs.get("row_index", 0))
-                data_rows = [
-                    d
-                    for d in el.descendants()
-                    if d.element_info.control_type in ("DataItem", "Row")
-                ]
-                if row_index < len(data_rows):
-                    row_el = data_rows[row_index]
-                    if hasattr(row_el, "select"):
-                        try:
-                            row_el.select()
-                        except Exception:
-                            ensure_focus()
-                            row_el.click_input()
-                    else:
-                        ensure_focus()
-                        row_el.click_input()
-                else:
-                    raise ControlNotFoundError(
-                        f"Row index {row_index} out of range for grid {control_id}"
-                    )
-            elif action == "edit_cell":
-                row_index = int(kwargs.get("row_index", 0))
-                column = str(kwargs.get("column", ""))
-                value = str(kwargs.get("value", ""))
-
-                data_rows = [
-                    d
-                    for d in el.descendants()
-                    if d.element_info.control_type in ("DataItem", "Row")
-                ]
-                if row_index < len(data_rows):
-                    row_el = data_rows[row_index]
-                    cells = [
-                        c
-                        for c in row_el.descendants()
-                        if c.element_info.control_type
-                        in ("Text", "Edit", "CheckBox", "DataItem")
-                    ]
-
-                    headers = [
-                        d
-                        for d in el.descendants()
-                        if d.element_info.control_type == "Header"
-                    ]
-                    header_items = []
-                    for h in headers:
-                        header_items.extend(
-                            [
-                                d.element_info.name
-                                for d in h.descendants()
-                                if d.element_info.name
-                            ]
-                        )
-                    if not header_items:
-                        header_items = [
-                            d.element_info.name
-                            for d in el.descendants()
-                            if d.element_info.control_type == "HeaderItem" and d.element_info.name
-                        ]
-
-                    cell_el = None
-                    if column in header_items:
-                        col_index = header_items.index(column)
-                        if col_index < len(cells):
-                            cell_el = cells[col_index]
-                    else:
-                        try:
-                            col_index = int(column)
-                            if col_index < len(cells):
-                                cell_el = cells[col_index]
-                        except ValueError:
-                            pass
-
-                    if cell_el:
-                        if hasattr(cell_el, "set_edit_text"):
-                            try:
-                                cell_el.set_edit_text(value)
-                            except Exception:
-                                ensure_focus()
-                                cell_el.click_input()
-                                cell_el.type_keys(value, with_spaces=True, with_tabs=True)
-                        else:
-                            ensure_focus()
-                            cell_el.click_input()
-                            cell_el.type_keys(value, with_spaces=True, with_tabs=True)
-                    else:
-                        raise ControlNotFoundError(
-                            f"Cell in column {column} not found in row {row_index}"
-                        )
-                else:
-                    raise ControlNotFoundError(
-                        f"Row index {row_index} out of range for grid {control_id}"
-                    )
             else:
                 raise UnsupportedControlError(f"Unsupported action {action}")
 

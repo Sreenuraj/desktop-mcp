@@ -41,56 +41,21 @@ class DesktopMCPServer:
             "activate_window": self.activate_window,
             "wait_for_window": self.wait_for_window,
             "close_window": self.close_window,
-            "maximize_window": self.maximize_window,
-            "minimize_window": self.minimize_window,
-            "desktop_snapshot": self.desktop_snapshot,
             "window_snapshot": self.window_snapshot,
             "control_tree": self.control_tree,
-            "find_control": self.find_control,
-            "find_controls": self.find_controls,
-            "get_control": self.get_control,
             "click": self.click,
-            "double_click": self.double_click,
-            "right_click": self.right_click,
-            "hover": self.hover,
-            "focus": self.focus,
+            "click_at": self.click_at,
             "drag_drop": self.drag_drop,
             "enter_text": self.enter_text,
-            "append_text": self.append_text,
-            "clear_text": self.clear_text,
+            "press_keys": self.press_keys,
             "read_text": self.read_text,
-            "select_dropdown": self.select_dropdown,
-            "select_tab": self.select_tab,
-            "select_radio": self.select_radio,
-            "check": self.check,
-            "uncheck": self.uncheck,
+            "select_item": self.select_item,
             "read_table": self.read_table,
-            "find_row": self.find_row,
-            "select_row": self.select_row,
-            "edit_cell": self.edit_cell,
-            "read_cell": self.read_cell,
-            "read_tree": self.read_tree,
-            "expand_node": self.expand_node,
-            "collapse_node": self.collapse_node,
-            "select_node": self.select_node,
-            "detect_dialog": self.detect_dialog,
-            "wait_for_dialog": self.wait_for_dialog,
-            "accept_dialog": self.accept_dialog,
-            "dismiss_dialog": self.dismiss_dialog,
-            "control_exists": self.control_exists,
-            "wait_for_control": self.wait_for_control,
-            "assert_text": self.assert_text,
-            "assert_control_state": self.assert_control_state,
-            "assert_table_row": self.assert_table_row,
             "capture_window": self.capture_window,
             "capture_desktop": self.capture_desktop,
             "start_recording": self.start_recording,
             "stop_recording": self.stop_recording,
-            "wait_for_browser": self.wait_for_browser,
-            "attach_browser_window": self.attach_browser_window,
             "generate_report": self.generate_report,
-            "click_at": self.click_at,
-            "restore_window": self.restore_window,
         }
 
     def call_tool(
@@ -209,26 +174,6 @@ class DesktopMCPServer:
         self.adapter.close_window(self._required(payload, "window_id"))
         return {}
 
-    def maximize_window(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.adapter.resize_window(self._required(payload, "window_id"), "maximized")
-        return {}
-
-    def minimize_window(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.adapter.resize_window(self._required(payload, "window_id"), "minimized")
-        return {}
-
-    def restore_window(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.adapter.resize_window(self._required(payload, "window_id"), "restored")
-        return {}
-
-    def desktop_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
-        windows = []
-        for win in self.adapter.list_windows():
-            data = win.to_dict(include_controls=False)
-            data["controls"] = self._flatten_controls(win.controls)
-            windows.append(data)
-        return {"applications": [], "windows": windows}
-
     def window_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
         window = self.adapter.get_window(self._required(payload, "window_id"))
         data = window.to_dict(include_controls=False)
@@ -264,37 +209,21 @@ class DesktopMCPServer:
             ],
         }
 
-    def find_control(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control = self.adapter.find_control(
-            self._required(payload, "window_id"),
-            payload.get("text"),
-            payload.get("type"),
-        )
-        return {"control": control.to_dict()}
-
-    def find_controls(self, payload: dict[str, Any]) -> dict[str, Any]:
-        controls = self.adapter.find_controls(
-            self._required(payload, "window_id"), payload.get("type")
-        )
-        return {"controls": [control.to_dict() for control in controls]}
-
-    def get_control(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self.adapter.get_control(self._required(payload, "control_id")).to_dict()
 
     def click(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("click", payload)
+        action = str(payload.get("action", "left"))
+        return self._interaction(action, payload)
 
-    def double_click(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("double_click", payload)
+    def press_keys(self, payload: dict[str, Any]) -> dict[str, Any]:
+        keys = self._required(payload, "keys")
+        control_id = payload.get("control_id")
+        if control_id:
+            return self.adapter.interact("press_keys", control_id, keys=keys)
+        else:
+            return self.adapter.interact("press_keys", "", keys=keys)
 
-    def right_click(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("right_click", payload)
-
-    def hover(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("hover", payload)
-
-    def focus(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("focus", payload)
+    def select_item(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._interaction("select_item", payload, value=self._required(payload, "value"))
 
     def drag_drop(self, payload: dict[str, Any]) -> dict[str, Any]:
         source = self._required(payload, "source_control_id")
@@ -316,14 +245,6 @@ class DesktopMCPServer:
             "enter_text", payload, value=self._required(payload, "value")
         )
 
-    def append_text(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction(
-            "append_text", payload, value=self._required(payload, "value")
-        )
-
-    def clear_text(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("clear_text", payload)
-
     def read_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "value": (
@@ -333,99 +254,8 @@ class DesktopMCPServer:
             )
         }
 
-    def select_dropdown(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction(
-            "select_dropdown", payload, value=self._required(payload, "value")
-        )
-
-    def select_tab(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("select_tab", payload)
-
-    def select_radio(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("select_radio", payload)
-
-    def check(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("check", payload)
-
-    def uncheck(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("uncheck", payload)
-
     def read_table(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.adapter.read_table(self._required(payload, "control_id"))
-
-    def find_row(self, payload: dict[str, Any]) -> dict[str, Any]:
-        finder = getattr(self.adapter, "find_row")
-        return finder(
-            self._required(payload, "control_id"), self._required(payload, "criteria")
-        )
-
-    def select_row(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control_id = self._required(payload, "control_id")
-        row_index = int(self._required(payload, "row_index"))
-        return self.adapter.interact("select_row", control_id, row_index=row_index)
-
-    def edit_cell(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control_id = self._required(payload, "control_id")
-        row_index = int(self._required(payload, "row_index"))
-        column = self._required(payload, "column")
-        value = self._required(payload, "value")
-        return self.adapter.interact(
-            "edit_cell", control_id, row_index=row_index, column=column, value=value
-        )
-
-    def read_cell(self, payload: dict[str, Any]) -> dict[str, Any]:
-        table = self.adapter.read_table(self._required(payload, "control_id"))
-        row_index = int(self._required(payload, "row_index"))
-        return {
-            "value": table["rows"][row_index].get(self._required(payload, "column"))
-        }
-
-    def read_tree(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control = self.adapter.get_control(self._required(payload, "control_id"))
-        return {"tree": control.to_dict(include_children=True)}
-
-    def expand_node(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"node_path": self._required(payload, "node_path"), "expanded": True}
-
-    def collapse_node(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"node_path": self._required(payload, "node_path"), "expanded": False}
-
-    def select_node(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"node_path": self._required(payload, "node_path"), "selected": True}
-
-    def detect_dialog(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"dialog": None}
-
-    def wait_for_dialog(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"dialog": None}
-
-    def accept_dialog(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"dialog_id": self._required(payload, "dialog_id"), "accepted": True}
-
-    def dismiss_dialog(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"dialog_id": self._required(payload, "dialog_id"), "dismissed": True}
-
-    def control_exists(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.adapter.get_control(self._required(payload, "control_id"))
-        return {"exists": True}
-
-    def wait_for_control(self, payload: dict[str, Any]) -> dict[str, Any]:
-        window_id = self._required(payload, "window_id")
-        text = payload.get("text")
-        type_ = payload.get("type")
-        timeout = float(payload.get("timeout", 10.0))
-
-        import time
-
-        start_time = time.perf_counter()
-        while True:
-            try:
-                control = self.adapter.find_control(window_id, text, type_)
-                return {"control": control.to_dict()}
-            except DesktopMCPError:
-                if time.perf_counter() - start_time >= timeout:
-                    raise
-                time.sleep(0.5)
 
     def _get_evidence_dir(self, session_id: str) -> str:
         import os
@@ -492,35 +322,6 @@ class DesktopMCPServer:
 
         return {"session_id": session_id, "artifact": report_path}
 
-    def assert_text(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control_id = self._required(payload, "control_id")
-        expected = self._required(payload, "expected")
-        session_id = payload.get("session_id")
-        try:
-            actual = self.adapter.get_control(control_id).value or ""
-            if actual != expected:
-                raise InvalidRequestError(f"Expected text {expected!r}, got {actual!r}")
-            return {"passed": True, "expected": expected, "actual": actual}
-        except Exception:
-            self._capture_failure_evidence(control_id, session_id)
-            raise
-
-    def assert_control_state(self, payload: dict[str, Any]) -> dict[str, Any]:
-        control_id = self._required(payload, "control_id")
-        session_id = payload.get("session_id")
-        try:
-            control = self.adapter.get_control(control_id)
-            for field in ("enabled", "visible", "focused"):
-                if field in payload and getattr(control, field) != payload[field]:
-                    raise InvalidRequestError(
-                        f"Expected {field}={payload[field]!r}, "
-                        f"got {getattr(control, field)!r}"
-                    )
-            return {"passed": True}
-        except Exception:
-            self._capture_failure_evidence(control_id, session_id)
-            raise
-
     def _capture_failure_evidence(
         self, control_id: str, session_id: str | None = None
     ) -> None:
@@ -548,9 +349,6 @@ class DesktopMCPServer:
                 self.adapter.capture_desktop(highlight_rect=highlight_rect)
         except Exception:
             pass
-
-    def assert_table_row(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self.find_row(payload)
 
     def capture_window(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = payload.get("session_id")
@@ -610,23 +408,6 @@ class DesktopMCPServer:
         if recorder:
             return recorder()
         return {"recording": False}
-
-    def wait_for_browser(self, payload: dict[str, Any]) -> dict[str, Any]:
-        session_id = payload.get("session_id")
-        if session_id:
-            self.sessions.get_session(session_id)
-
-        timeout = float(payload.get("timeout", 60.0))
-        return self.adapter.wait_for_browser(timeout=timeout)
-
-    def attach_browser_window(self, payload: dict[str, Any]) -> dict[str, Any]:
-        session_id = payload.get("session_id")
-        if session_id:
-            self.sessions.get_session(session_id)
-
-        title_contains = payload.get("title_contains")
-        title_str = str(title_contains) if title_contains is not None else None
-        return self.adapter.attach_browser_window(title_contains=title_str)
 
     def _interaction(
         self, action: str, payload: dict[str, Any], **kwargs: Any
