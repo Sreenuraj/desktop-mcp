@@ -1,9 +1,15 @@
+from __future__ import annotations
+
+from typing import Any
+
+
 class DesktopMCPError(Exception):
     code = "INTERNAL_ERROR"
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
+        self.details: dict[str, Any] = details or {}
 
 
 class InvalidRequestError(DesktopMCPError):
@@ -32,3 +38,19 @@ class UnsupportedControlError(DesktopMCPError):
 
 class ControlDisabledError(DesktopMCPError):
     code = "CONTROL_DISABLED"
+
+
+class SnapshotEmptyError(DesktopMCPError):
+    """Raised when UIA returns an empty control tree for a window that should have children.
+
+    The agent should treat this as a recoverable error: try activate_window then
+    window_snapshot again, or fall back to capture_window for visual inspection.
+    """
+
+    code = "SNAPSHOT_EMPTY"
+
+
+class UnknownToolError(DesktopMCPError):
+    """Raised when the agent calls a tool name that does not exist."""
+
+    code = "UNKNOWN_TOOL"

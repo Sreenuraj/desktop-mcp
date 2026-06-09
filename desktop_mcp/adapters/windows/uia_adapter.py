@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import time
+import warnings
 from typing import Any
 
 from desktop_mcp.errors import (
@@ -9,12 +12,15 @@ from desktop_mcp.errors import (
     ControlDisabledError,
     ControlNotFoundError,
     DesktopMCPError,
+    SnapshotEmptyError,
     UnsupportedControlError,
     WindowNotFoundError,
 )
 from desktop_mcp.models.application import Application
 from desktop_mcp.models.control import Control
 from desktop_mcp.models.window import Window
+
+logger = logging.getLogger(__name__)
 
 # Try to import Windows dependencies, otherwise define them as None to allow
 # testing/linting on macOS
@@ -96,6 +102,45 @@ UIA_CONTROL_TYPE_MAP = {
     "Window": "Window",
 }
 
+# Control types that are pure structural containers — an empty tree of only these
+# types is a strong signal that UIA didn't actually enumerate the app's UI.
+_STRUCTURAL_ONLY_TYPES = frozenset({"Pane", "Window", "Group", "Custom", "Separator"})
+
+
+def _is_foreground(hwnd: int) -> bool:
+    """Return True if *hwnd* is the current foreground window."""
+    try:
+        return bool(win32gui and win32gui.GetForegroundWindow() == hwnd)
+    except Exception:
+        return False
+
+
+def _get_foreground_title() -> str:
+    """Return the title of the current foreground window (best-effort)."""
+    try:
+        if win32gui:
+            hwnd = win32gui.GetForegroundWindow()
+            return win32gui.GetWindowText(hwnd) or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _has_non_trivial_bounds(win_wrapper: Any) -> bool:
+    """Return True if the window has a non-zero bounding rectangle."""
+    try:
+        rect = win_wrapper.rectangle()
+        return (rect.width() > 0) and (rect.height() > 0)
+    except Exception:
+        return True  # assume non-trivial if we can't check
+
+
+def _controls_are_structural_only(controls: list[Control]) -> bool:
+    """Return True if every control in *controls* is a pure structural container."""
+    if not controls:
+        return True
+    return all(c.type in _STRUCTURAL_ONLY_TYPES for c in controls)
+
 
 class WindowsUIAutomationAdapter:
     """Windows UI Automation adapter using pywinauto and comtypes.
@@ -145,7 +190,6 @@ class WindowsUIAutomationAdapter:
 
             # Wait briefly — UWP apps (e.g. calc.exe) are shims that
             # spawn a separate process and exit immediately.
-            import time
             time.sleep(1.5)
 
             # Check if the launched process is still alive
@@ -257,7 +301,7 @@ class WindowsUIAutomationAdapter:
                         continue
                     process_id = win.process_id()
                     application_id = f"app_{process_id}"
-                    active = win32gui.GetForegroundWindow() == handle
+                    active = _is_foreground(handle)
                     window_id = f"win_{handle}"
                     windows.append(
                         Window(
@@ -273,33 +317,65 @@ class WindowsUIAutomationAdapter:
             raise DesktopMCPError(f"Failed to list windows: {exc}") from exc
         return windows
 
-    def activate_window(self, window_id: str) -> None:
+    # ------------------------------------------------------------------
+    # Phase 1.2 — activate_window returns observable state
+    # ------------------------------------------------------------------
+
+    def activate_window(self, window_id: str) -> dict[str, Any]:
+        """Bring a window to the foreground.
+
+        Returns a structured result so the agent can verify the activation
+        actually succeeded instead of silently assuming it did.
+        """
         self._check_platform()
+        t0 = time.perf_counter()
         try:
             win = self._resolve_window(window_id)
             if hasattr(win, "is_minimized") and win.is_minimized():
                 win.restore()
-                import time
                 time.sleep(0.1)
 
-            if hasattr(win, "handle"):
-                hwnd = win.handle
-                import ctypes
-                import win32gui
-                import win32con
+            hwnd = win.handle if hasattr(win, "handle") else None
+            became_foreground = False
+            attempts = 0
 
-                # Ensure the window is shown and not hidden
+            if hwnd:
+                import ctypes
+
                 win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
 
-                # Simulating Alt Down/Up key events bypasses Windows SetForegroundWindow restrictions
-                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)  # Alt key down
-                win32gui.SetForegroundWindow(hwnd)
-                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)  # Alt key up
-                import time
-                time.sleep(0.15)
+                for attempt in range(10):
+                    attempts = attempt + 1
+                    if _is_foreground(hwnd):
+                        became_foreground = True
+                        break
+                    # Alt-key bypass for SetForegroundWindow restriction
+                    ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+                    win32gui.SetForegroundWindow(hwnd)
+                    ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
+                    time.sleep(0.15)
 
             if hasattr(win, "set_focus"):
-                win.set_focus()
+                try:
+                    win.set_focus()
+                except Exception:
+                    pass
+
+            is_fg = _is_foreground(hwnd) if hwnd else False
+            fg_hwnd = win32gui.GetForegroundWindow() if win32gui else 0
+            fg_title = _get_foreground_title()
+            fg_window_id = f"win_{fg_hwnd}" if fg_hwnd else ""
+            total_ms = int((time.perf_counter() - t0) * 1000)
+
+            return {
+                "window_id": window_id,
+                "is_foreground": is_fg,
+                "became_foreground": became_foreground,
+                "foreground_window_id": fg_window_id,
+                "foreground_title": fg_title,
+                "attempts": attempts,
+                "total_ms": total_ms,
+            }
         except WindowNotFoundError:
             raise
         except Exception as exc:
@@ -334,8 +410,14 @@ class WindowsUIAutomationAdapter:
                 f"Failed to resize window {window_id}: {exc}"
             ) from exc
 
+    # ------------------------------------------------------------------
+    # Phase 1.1 + 1.2 — get_window with empty-result detection and
+    # enriched metadata
+    # ------------------------------------------------------------------
+
     def get_window(self, window_id: str) -> Window:
         self._check_platform()
+        t0 = time.perf_counter()
         try:
             win_wrapper = self._resolve_window(window_id)
             handle = win_wrapper.handle
@@ -343,25 +425,18 @@ class WindowsUIAutomationAdapter:
             process_id = win_wrapper.process_id()
             application_id = f"app_{process_id}"
 
-            # Always bring the window to the foreground and activate it before extracting controls.
-            # UWP/modern Windows apps (like Calculator) suspend when in the background or fully covered,
-            # which causes UIA to return an empty control tree. Activating the window wakes it up.
+            # Bring the window to foreground so UWP/modern apps wake their UIA provider.
             try:
                 if win_wrapper.is_minimized():
                     win_wrapper.restore()
-                    import time
                     time.sleep(0.15)
 
                 import ctypes
-                import win32gui
-                import win32con
-                import time
 
                 win32gui.ShowWindow(handle, win32con.SW_SHOW)
-                
-                # Robust retry loop to bypass focus stealing
+
                 for _ in range(10):
-                    if win32gui.GetForegroundWindow() == handle:
+                    if _is_foreground(handle):
                         break
                     ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
                     win32gui.SetForegroundWindow(handle)
@@ -373,43 +448,105 @@ class WindowsUIAutomationAdapter:
             except Exception:
                 pass
 
-            active = win32gui.GetForegroundWindow() == handle
+            active = _is_foreground(handle)
 
-            # Recursively build hierarchical controls starting from immediate children
+            # --- Phase 1.1: build control tree with error propagation ---
             controls: list[Control] = []
+            capture_method = "uia_children"
+            first_exception: Exception | None = None
+
             try:
                 children = win_wrapper.children()
-            except Exception:
+            except Exception as exc:
                 children = []
+                first_exception = exc
 
             for child in children:
                 try:
                     controls.extend(self._build_control_tree(child))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Log at WARN instead of silently swallowing
+                    logger.warning(
+                        "Error building control tree for child of window %r: %s",
+                        title,
+                        exc,
+                    )
+                    if first_exception is None:
+                        first_exception = exc
 
             # If children() returned nothing, try descendants() as fallback
             if not controls:
+                capture_method = "uia_descendants"
                 try:
                     descendants = win_wrapper.descendants()
-                except Exception:
+                except Exception as exc:
                     descendants = []
+                    if first_exception is None:
+                        first_exception = exc
 
                 for desc in descendants:
                     try:
                         if self._should_include_control(desc):
                             controls.append(self._map_control(desc))
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning(
+                            "Error mapping descendant control in window %r: %s",
+                            title,
+                            exc,
+                        )
                         continue
 
-            return Window(
+            took_ms = int((time.perf_counter() - t0) * 1000)
+
+            # --- Phase 1.1: raise SnapshotEmptyError when tree is empty
+            # but the window clearly should have children ---
+            if not controls or _controls_are_structural_only(controls):
+                has_bounds = _has_non_trivial_bounds(win_wrapper)
+                if has_bounds:
+                    uia_state = "denied" if first_exception else "empty"
+                    hint = (
+                        "UIA returned no interactive descendants for this window. "
+                        "Likely causes: window is not foreground / process is suspended "
+                        "/ UIA access denied. "
+                        "Recovery: call activate_window then window_snapshot again, "
+                        "or use capture_window for a visual fallback."
+                    )
+                    raise SnapshotEmptyError(
+                        f"UIA returned no descendants for window '{title}'. "
+                        f"Likely causes: window is not foreground / process is suspended "
+                        f"/ UIA access denied. "
+                        f"Try activate_window then window_snapshot again, "
+                        f"or use capture_window for visual fallback.",
+                        details={
+                            "window_id": window_id,
+                            "title": title,
+                            "is_foreground": active,
+                            "uia_state": uia_state,
+                            "took_ms": took_ms,
+                            "hint": hint,
+                        },
+                    )
+
+            # Attach snapshot metadata to the Window object so the server layer
+            # can include it in the response (Phase 1.2).
+            win_obj = Window(
                 window_id=window_id,
                 title=title,
                 application_id=application_id,
                 active=active,
                 controls=controls,
             )
-        except WindowNotFoundError:
+            # Stash extra metadata as a plain attribute — the model doesn't
+            # define it, but the server reads it via getattr.
+            win_obj._snapshot_meta = {  # type: ignore[attr-defined]
+                "controls_count": len(controls),
+                "capture_method": capture_method,
+                "uia_state": "live",
+                "took_ms": took_ms,
+            }
+            return win_obj
+
+        except (WindowNotFoundError, SnapshotEmptyError):
             raise
         except Exception as exc:
             raise DesktopMCPError(f"Failed to get window {window_id}: {exc}") from exc
@@ -457,18 +594,18 @@ class WindowsUIAutomationAdapter:
 
         Filters out non-essential containers, lifting their semantic
         children up to keep tree shallow.
+
+        Phase 1.1: exceptions from individual children are logged at WARN
+        rather than silently swallowed.  The first exception is re-raised
+        if no descendants were produced at all.
         """
         if current_depth > max_depth:
             return []
 
-        # Do not discard elements based on is_visible() here.
-        # If the target window is inactive or partially covered by VS Code (e.g. during manual approvals),
-        # elements may report as not visible. Removing this check ensures we still extract and allow
-        # interaction with them.
-
         include = self._should_include_control(element)
 
-        child_controls = []
+        child_controls: list[Control] = []
+        first_child_exc: Exception | None = None
         try:
             children = element.children()
         except Exception:
@@ -479,8 +616,12 @@ class WindowsUIAutomationAdapter:
                 child_controls.extend(
                     self._build_control_tree(child, current_depth + 1, max_depth)
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Skipping child element during control tree build: %s", exc
+                )
+                if first_child_exc is None:
+                    first_child_exc = exc
 
         if include:
             control = self._map_control(element)
@@ -502,9 +643,8 @@ class WindowsUIAutomationAdapter:
 
     def find_controls(self, window_id: str, type: str | None = None) -> list[Control]:
         self._check_platform()
-        # Flatten the control tree to allow searching
         window = self.get_window(window_id)
-        flat_controls = []
+        flat_controls: list[Control] = []
 
         def flatten(ctrls: list[Control]) -> None:
             for c in ctrls:
@@ -522,41 +662,55 @@ class WindowsUIAutomationAdapter:
         el = self._resolve_control(control_id)
         return self._map_control(el)
 
+    # ------------------------------------------------------------------
+    # Phase 1.2 — interact() returns enriched result with method/timing
+    # ------------------------------------------------------------------
+
     def interact(self, action: str, control_id: str, **kwargs: Any) -> dict:
         self._check_platform()
-        
+        t0 = time.perf_counter()
+
         # If no control ID is provided and the action is press_keys on the active window
         if not control_id and action == "press_keys":
             import pywinauto.keyboard
+
             keys = kwargs.get("keys", "")
             pywinauto.keyboard.send_keys(keys, with_spaces=True, with_tabs=True)
-            return {"action": action, "control_id": control_id}
-            
+            took_ms = int((time.perf_counter() - t0) * 1000)
+            return {
+                "action": action,
+                "control_id": control_id,
+                "method": "global_send_keys",
+                "required_foreground": True,
+                "foreground_taken": False,
+                "took_ms": took_ms,
+            }
+
         el = self._resolve_control(control_id)
         if not el.is_enabled():
             raise ControlDisabledError(f"Control is disabled: {control_id}")
 
-        def ensure_focus() -> None:
+        foreground_taken = False
+
+        def ensure_focus() -> bool:
+            """Bring the parent window to foreground. Returns True if foreground was acquired."""
+            nonlocal foreground_taken
             try:
                 if hasattr(el, "top_level_parent"):
                     parent = el.top_level_parent()
                     if hasattr(parent, "is_minimized") and parent.is_minimized():
                         parent.restore()
-                        import time
                         time.sleep(0.1)
 
                     if hasattr(parent, "handle"):
                         hwnd = parent.handle
                         import ctypes
-                        import win32gui
-                        import win32con
-                        import time
 
                         win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
 
-                        # Robust retry loop
                         for _ in range(10):
-                            if win32gui.GetForegroundWindow() == hwnd:
+                            if _is_foreground(hwnd):
+                                foreground_taken = True
                                 break
                             ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
                             win32gui.SetForegroundWindow(hwnd)
@@ -565,28 +719,46 @@ class WindowsUIAutomationAdapter:
 
                     if hasattr(parent, "set_focus"):
                         parent.set_focus()
+                    return foreground_taken
             except Exception:
                 pass
+            return False
 
-        ensure_focus()
+        method = "click_input"
+        required_foreground = True
 
         try:
             if action in ("left", "click"):
-                if hasattr(el, "invoke") and el.element_info.control_type == "Button":
+                ctrl_type = el.element_info.control_type
+                if hasattr(el, "invoke") and ctrl_type == "Button":
                     try:
                         el.invoke()
+                        method = "uia_invoke"
+                        required_foreground = False
                     except Exception:
                         ensure_focus()
                         el.click_input()
-                elif hasattr(el, "select") and el.element_info.control_type in ("ListItem", "MenuItem", "TabItem", "RadioButton", "TreeViewItem"):
+                        method = "click_input"
+                elif hasattr(el, "select") and ctrl_type in (
+                    "ListItem",
+                    "MenuItem",
+                    "TabItem",
+                    "RadioButton",
+                    "TreeViewItem",
+                ):
                     try:
                         el.select()
+                        method = "uia_select"
+                        required_foreground = False
                     except Exception:
                         ensure_focus()
                         el.click_input()
+                        method = "click_input"
                 else:
                     ensure_focus()
                     el.click_input()
+                    method = "click_input"
+
             elif action == "double":
                 ensure_focus()
                 if hasattr(el, "double_click_input"):
@@ -594,43 +766,70 @@ class WindowsUIAutomationAdapter:
                 else:
                     el.click_input()
                     el.click_input()
+                method = "click_input"
+
             elif action == "right":
                 ensure_focus()
                 el.right_click_input()
+                method = "click_input"
+
             elif action == "hover":
                 ensure_focus()
                 el.move_mouse_input()
+                method = "click_input"
+
             elif action == "enter_text":
                 val = kwargs.get("value", "")
                 if hasattr(el, "set_edit_text"):
                     try:
                         el.set_edit_text(val)
+                        method = "uia_value"
+                        required_foreground = False
                     except Exception:
                         ensure_focus()
                         el.type_keys(val, with_spaces=True, with_tabs=True)
+                        method = "type_keys"
                 else:
                     ensure_focus()
                     el.type_keys(val, with_spaces=True, with_tabs=True)
+                    method = "type_keys"
+
             elif action == "press_keys":
                 val = kwargs.get("keys", "")
                 ensure_focus()
                 el.set_focus()
                 el.type_keys(val, with_spaces=True, with_tabs=True)
+                method = "type_keys"
+
             elif action == "select_item":
                 val = str(kwargs.get("value", ""))
                 if hasattr(el, "select"):
                     try:
                         el.select(val)
+                        method = "uia_select"
+                        required_foreground = False
                     except Exception:
                         ensure_focus()
                         el.click_input()
+                        method = "click_input"
                 else:
                     ensure_focus()
                     el.click_input()
+                    method = "click_input"
+
             else:
                 raise UnsupportedControlError(f"Unsupported action {action}")
 
-            return {"action": action, "control_id": control_id}
+            took_ms = int((time.perf_counter() - t0) * 1000)
+            return {
+                "action": action,
+                "control_id": control_id,
+                "method": method,
+                "required_foreground": required_foreground,
+                "foreground_taken": foreground_taken,
+                "took_ms": took_ms,
+            }
+
         except DesktopMCPError:
             raise
         except Exception as exc:
@@ -730,12 +929,17 @@ class WindowsUIAutomationAdapter:
             if highlight_rect:
                 try:
                     from PIL import ImageDraw
+
                     rel_left = highlight_rect[0] - rect.left
                     rel_top = highlight_rect[1] - rect.top
                     rel_right = highlight_rect[2] - rect.left
                     rel_bottom = highlight_rect[3] - rect.top
                     draw = ImageDraw.Draw(screenshot)
-                    draw.rectangle((rel_left, rel_top, rel_right, rel_bottom), outline="red", width=3)
+                    draw.rectangle(
+                        (rel_left, rel_top, rel_right, rel_bottom),
+                        outline="red",
+                        width=3,
+                    )
                 except Exception:
                     pass
 
@@ -765,6 +969,7 @@ class WindowsUIAutomationAdapter:
             if highlight_rect:
                 try:
                     from PIL import ImageDraw
+
                     draw = ImageDraw.Draw(screenshot)
                     draw.rectangle(highlight_rect, outline="red", width=3)
                 except Exception:
@@ -793,8 +998,6 @@ class WindowsUIAutomationAdapter:
         self._stop_recording_event.clear()
 
         def record_loop():
-            import time
-
             while not self._stop_recording_event.is_set():
                 try:
                     if ImageGrab is not None:
@@ -857,8 +1060,6 @@ class WindowsUIAutomationAdapter:
 
     def wait_for_browser(self, timeout: float = 60.0) -> dict:
         self._check_platform()
-        import time
-
         start = time.perf_counter()
         while time.perf_counter() - start < timeout:
             for win in self.list_windows():
@@ -956,9 +1157,11 @@ class WindowsUIAutomationAdapter:
                 pywinauto_mouse.click(coords=(x, y))
             return {"x": x, "y": y, "button": button}
         except Exception as exc:
-            raise DesktopMCPError(
-                f"Failed to click at ({x}, {y}): {exc}"
-            ) from exc
+            raise DesktopMCPError(f"Failed to click at ({x}, {y}): {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _resolve_window(self, window_id: str) -> Any:
         try:
@@ -974,7 +1177,6 @@ class WindowsUIAutomationAdapter:
         try:
             desktop = PyWinDesktop(backend="uia")
             win = desktop.window(handle=handle)
-            # Resolve to a wrapper object immediately
             return win.wrapper_object()
         except Exception:
             pass
@@ -983,7 +1185,6 @@ class WindowsUIAutomationAdapter:
         try:
             app = PyWinApplication(backend="uia").connect(handle=handle)
             win = app.window(handle=handle)
-            # Resolve to a wrapper object immediately
             return win.wrapper_object()
         except Exception as exc:
             raise WindowNotFoundError(f"Window not found: {window_id}") from exc
@@ -1000,7 +1201,13 @@ class WindowsUIAutomationAdapter:
         def should_skip_window(win) -> bool:
             try:
                 title = (win.window_text() or "").lower()
-                for pattern in ("visual studio code", " - cursor", "cmd.exe", "powershell.exe", "terminal"):
+                for pattern in (
+                    "visual studio code",
+                    " - cursor",
+                    "cmd.exe",
+                    "powershell.exe",
+                    "terminal",
+                ):
                     if pattern in title:
                         return True
             except Exception:

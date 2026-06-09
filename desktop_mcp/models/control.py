@@ -19,6 +19,11 @@ class Control:
     children: list["Control"] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def control_id(self) -> str:
+        """Alias for ``id`` — used by the server layer for consistency."""
+        return self.id
+
     def to_dict(self, include_children: bool = False) -> dict[str, Any]:
         data = asdict(self)
         if not include_children:

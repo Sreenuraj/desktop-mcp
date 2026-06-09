@@ -122,12 +122,22 @@ class InMemoryDesktopAdapter:
     def list_windows(self) -> list[Window]:
         return list(self._windows.values())
 
-    def activate_window(self, window_id: str) -> None:
+    def activate_window(self, window_id: str) -> dict:
         if window_id not in self._windows:
             raise WindowNotFoundError(f"Window not found: {window_id}")
         for window in self._windows.values():
             window.active = False
         self._windows[window_id].active = True
+        # Phase 1.2: return observable state (mirrors UIA adapter contract)
+        return {
+            "window_id": window_id,
+            "is_foreground": True,
+            "became_foreground": True,
+            "foreground_window_id": window_id,
+            "foreground_title": self._windows[window_id].title,
+            "attempts": 1,
+            "total_ms": 0,
+        }
 
     def close_window(self, window_id: str) -> None:
         if window_id not in self._windows:

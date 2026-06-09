@@ -5,7 +5,7 @@ from typing import Any
 
 from desktop_mcp.adapters.base import DesktopAdapter
 from desktop_mcp.adapters.memory import InMemoryDesktopAdapter
-from desktop_mcp.errors import DesktopMCPError, InvalidRequestError
+from desktop_mcp.errors import DesktopMCPError, InvalidRequestError, UnknownToolError
 from desktop_mcp.models.response import MCPResponse
 from desktop_mcp.session.session_manager import SessionManager
 
@@ -41,6 +41,8 @@ class DesktopMCPServer:
             "activate_window": self.activate_window,
             "wait_for_window": self.wait_for_window,
             "close_window": self.close_window,
+            # Phase 1.3: desktop_snapshot restored as thin wrapper
+            "desktop_snapshot": self.desktop_snapshot,
             "window_snapshot": self.window_snapshot,
             "control_tree": self.control_tree,
             "click": self.click,
@@ -94,8 +96,13 @@ class DesktopMCPServer:
                 pass
 
         try:
+            # Phase 1.3: UNKNOWN_TOOL guard — structured error listing valid tools
             if name not in self._tools:
-                raise InvalidRequestError(f"Unknown tool: {name}")
+                raise UnknownToolError(
+                    f"Unknown tool: '{name}'. Valid tools are: "
+                    + ", ".join(sorted(self._tools)),
+                    details={"requested_tool": name, "valid_tools": sorted(self._tools)},
+                )
             if name != "create_session":
                 session = self.sessions.get_session(session_id)
                 session_id = session.session_id
@@ -107,12 +114,17 @@ class DesktopMCPServer:
             return MCPResponse.ok(data).to_dict()
         except DesktopMCPError as exc:
             duration = time.time() - start_time
-            err_info = {"code": exc.code, "message": exc.message}
+            err_info = {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+            }
             log_action(session_id, "error", duration, error_info=err_info)
-            return MCPResponse.fail(exc.code, exc.message).to_dict()
+            # Phase 1.6: set isError=True on the MCP CallToolResult envelope
+            return MCPResponse.fail(exc.code, exc.message, details=exc.details).to_dict()
         except Exception as exc:
             duration = time.time() - start_time
-            err_info = {"code": "INTERNAL_ERROR", "message": str(exc)}
+            err_info = {"code": "INTERNAL_ERROR", "message": str(exc), "details": {}}
             log_action(session_id, "error", duration, error_info=err_info)
             return MCPResponse.fail("INTERNAL_ERROR", str(exc)).to_dict()
 
@@ -158,26 +170,112 @@ class DesktopMCPServer:
         return {"windows": [window.to_dict() for window in self.adapter.list_windows()]}
 
     def activate_window(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.adapter.activate_window(self._required(payload, "window_id"))
-        return {}
+        """Phase 1.2: returns observable foreground state instead of empty {}."""
+        result = self.adapter.activate_window(self._required(payload, "window_id"))
+        # The memory adapter returns None (old contract); normalise gracefully.
+        if result is None:
+            return {"window_id": payload.get("window_id"), "is_foreground": None}
+        return result
+
+    # ------------------------------------------------------------------
+    # Phase 1.4 — wait_for_window: proper polling loop
+    # ------------------------------------------------------------------
 
     def wait_for_window(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Poll until a window whose title contains *title_contains* appears.
+
+        Parameters
+        ----------
+        title_contains : str
+            Case-insensitive substring to match against window titles.
+        timeout_ms : int, optional
+            Maximum time to wait in milliseconds (default 10 000).
+
+        Returns the matching window dict on success, or raises
+        ``WindowNotFoundError`` on timeout.
+        """
+        import time
+
+        from desktop_mcp.errors import WindowNotFoundError
+
         title_contains = str(self._required(payload, "title_contains")).lower()
-        for window in self.adapter.list_windows():
-            if title_contains in window.title.lower():
-                return window.to_dict()
-        raise InvalidRequestError(
-            f"Window not found within timeout: {payload.get('title_contains')}"
+        timeout_ms = int(payload.get("timeout_ms", 10_000))
+        poll_interval = 0.25  # seconds
+
+        deadline = time.perf_counter() + timeout_ms / 1000.0
+        while True:
+            for window in self.adapter.list_windows():
+                if title_contains in window.title.lower():
+                    return window.to_dict()
+
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            time.sleep(min(poll_interval, remaining))
+
+        raise WindowNotFoundError(
+            f"Window with title containing '{payload.get('title_contains')}' "
+            f"not found within {timeout_ms} ms"
         )
 
     def close_window(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.adapter.close_window(self._required(payload, "window_id"))
         return {}
 
+    # ------------------------------------------------------------------
+    # Phase 1.3: desktop_snapshot — thin wrapper over list_windows +
+    # per-window shallow snapshot
+    # ------------------------------------------------------------------
+
+    def desktop_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return a lightweight snapshot of all visible windows.
+
+        Each entry includes the window metadata plus a shallow control list
+        (top-level controls only, no deep recursion).  This is the same
+        information the agent used to get from the now-removed
+        ``desktop_snapshot`` tool, restored for backward compatibility.
+        """
+        windows_out = []
+        for window in self.adapter.list_windows():
+            entry = window.to_dict(include_controls=False)
+            # Best-effort shallow snapshot — skip windows that error
+            try:
+                win_detail = self.adapter.get_window(window.window_id)
+                entry["controls"] = self._flatten_controls(win_detail.controls)
+                entry["controls_count"] = len(entry["controls"])
+                # Include snapshot metadata if the adapter attached it
+                meta = getattr(win_detail, "_snapshot_meta", None)
+                if meta:
+                    entry.update(meta)
+            except Exception as exc:
+                entry["controls"] = []
+                entry["controls_count"] = 0
+                entry["snapshot_error"] = str(exc)
+            windows_out.append(entry)
+        return {"windows": windows_out, "windows_count": len(windows_out)}
+
+    # ------------------------------------------------------------------
+    # Phase 1.2: window_snapshot — enriched with metadata
+    # ------------------------------------------------------------------
+
     def window_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
         window = self.adapter.get_window(self._required(payload, "window_id"))
         data = window.to_dict(include_controls=False)
-        data["controls"] = self._flatten_controls(window.controls)
+        flat_controls = self._flatten_controls(window.controls)
+        data["controls"] = flat_controls
+        data["controls_count"] = len(flat_controls)
+
+        # Merge snapshot metadata attached by the UIA adapter (Phase 1.2)
+        meta = getattr(window, "_snapshot_meta", None)
+        if meta:
+            data.setdefault("capture_method", meta.get("capture_method", "uia_children"))
+            data.setdefault("uia_state", meta.get("uia_state", "live"))
+            data.setdefault("took_ms", meta.get("took_ms"))
+        else:
+            # Memory adapter / other adapters — provide sensible defaults
+            data.setdefault("capture_method", "in_memory")
+            data.setdefault("uia_state", "live")
+
         return data
 
     def _flatten_controls(self, controls: list[Any]) -> list[dict[str, Any]]:
@@ -200,15 +298,31 @@ class DesktopMCPServer:
         helper(controls)
         return flat
 
+    # ------------------------------------------------------------------
+    # Phase 1.2: control_tree — enriched with node count and timing
+    # ------------------------------------------------------------------
+
     def control_tree(self, payload: dict[str, Any]) -> dict[str, Any]:
+        import time
+
+        t0 = time.perf_counter()
         window = self.adapter.get_window(self._required(payload, "window_id"))
+        tree = [control.to_dict(include_children=True) for control in window.controls]
+        took_ms = int((time.perf_counter() - t0) * 1000)
+
+        def count_nodes(nodes: list[dict]) -> int:
+            total = 0
+            for node in nodes:
+                total += 1
+                total += count_nodes(node.get("children", []))
+            return total
+
         return {
             "window_id": window.window_id,
-            "tree": [
-                control.to_dict(include_children=True) for control in window.controls
-            ],
+            "tree": tree,
+            "tree_node_count": count_nodes(tree),
+            "took_ms": took_ms,
         }
-
 
     def click(self, payload: dict[str, Any]) -> dict[str, Any]:
         action = str(payload.get("action", "left"))
@@ -223,7 +337,9 @@ class DesktopMCPServer:
             return self.adapter.interact("press_keys", "", keys=keys)
 
     def select_item(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._interaction("select_item", payload, value=self._required(payload, "value"))
+        return self._interaction(
+            "select_item", payload, value=self._required(payload, "value")
+        )
 
     def drag_drop(self, payload: dict[str, Any]) -> dict[str, Any]:
         source = self._required(payload, "source_control_id")
@@ -250,7 +366,8 @@ class DesktopMCPServer:
             "value": (
                 self.adapter.get_control(
                     self._required(payload, "control_id")
-                ).value or ""
+                ).value
+                or ""
             )
         }
 
@@ -333,7 +450,12 @@ class DesktopMCPServer:
                 control = self.adapter.get_control(control_id)
                 if control.bounds:
                     b = control.bounds
-                    highlight_rect = (b["left"], b["top"], b["left"] + b["width"], b["top"] + b["height"])
+                    highlight_rect = (
+                        b["left"],
+                        b["top"],
+                        b["left"] + b["width"],
+                        b["top"] + b["height"],
+                    )
             except Exception:
                 pass
 
@@ -365,7 +487,9 @@ class DesktopMCPServer:
 
             ev_dir = self._get_evidence_dir(session_id)
             path = os.path.join(ev_dir, f"window_{window_id}_{int(time.time())}.png")
-            return self.adapter.capture_window(window_id, path=path, highlight_rect=highlight_rect)
+            return self.adapter.capture_window(
+                window_id, path=path, highlight_rect=highlight_rect
+            )
         return self.adapter.capture_window(window_id, highlight_rect=highlight_rect)
 
     def capture_desktop(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -420,9 +544,7 @@ class DesktopMCPServer:
             control = self.adapter.find_control(window_id, text=text, type=type_)
             control_id = control.control_id
 
-        return self.adapter.interact(
-            action, control_id, **kwargs
-        )
+        return self.adapter.interact(action, control_id, **kwargs)
 
     def _required(self, payload: dict[str, Any], key: str) -> Any:
         value = payload.get(key)

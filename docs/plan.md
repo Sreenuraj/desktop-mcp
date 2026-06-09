@@ -316,7 +316,14 @@ That is the bar for "Playwright-MCP-equivalent for desktop."
 
 ## Open questions for the user
 
-1. **Should `restore_foreground_after_action` (Phase 2.4) be on or off by default?** On = invisible-feeling agent (recommended). Off = explicit and predictable for debugging.
+1. **Should `restore_foreground_after_action` (Phase 2.4) be on or off by default?**
+   → **Answer: On (recommended approach).** Invisible-feeling agent — foreground is restored to VSCode after each action.
+
 2. **For SURGE specifically: do you have admin/UIA-provider access guarantees, or do we need to plan for elevated-process windows (e.g. hospital workstations with restricted UAC)?**
+   → **Answer: Limited knowledge / no access to SURGE currently.** Plan conservatively; assume no elevated-process guarantees until confirmed.
+
 3. **Is there a SURGE test build I can target, or should all dev be against calc.exe + Notepad until SURGE is available?**
+   → **Answer: Dev/testing is done by the user on Windows.** Unit tests (which run on macOS) use mocks. Live validation is the user's responsibility.
+
 4. **Recorder round-trip (Phase 6) — keep deferred or pull forward?**
+   → **Answer: Keep deferred.** The recorder must not break due to Phase 1–5 changes; no new recorder work in this phase.
