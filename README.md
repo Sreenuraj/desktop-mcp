@@ -1,58 +1,27 @@
 # Desktop MCP
 
-Desktop MCP is a Model Context Protocol (MCP) server designed for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, perform mouse clicks, read grids, and capture screenshots — **without relying on fragile coordinate-based scripts and without requiring the target window to be in foreground**.
-
----
-
-## What's New (Phase 1 + 2 — 2026-09-06)
-
-### Phase 1 — Observable Failures
-The server no longer hides failures behind success-shaped responses. Every tool now gives the agent enough information to self-correct.
-
-| Change | Detail |
-|---|---|
-| `SNAPSHOT_EMPTY` error | `window_snapshot` raises a structured error (not `controls: []`) when UIA returns an empty tree. Includes `uia_state`, `is_foreground`, `took_ms`, and a `hint` with the recovery steps. |
-| `isError: true` | Every error response sets `isError: true` on the MCP envelope — the canonical signal LLM-side libraries respect. |
-| `activate_window` observable state | Returns `is_foreground`, `became_foreground`, `foreground_title`, `attempts`, `total_ms` instead of `{}`. |
-| `window_snapshot` enriched | Returns `controls_count`, `capture_method` (`uia_children`/`uia_descendants`), `uia_state` (`live`/`empty`/`denied`), `took_ms`. |
-| `control_tree` enriched | Returns `tree_node_count` and `took_ms`. |
-| `desktop_snapshot` restored | Was removed in `5bb4eb8`; agents in production still call it. Restored as a thin wrapper over `list_windows` + per-window snapshot. |
-| `wait_for_window` actually waits | Now polls every 250 ms up to `timeout_ms` (default 10 000 ms). Previously returned immediately. |
-| `UNKNOWN_TOOL` guard | Unknown tool names return a structured error with `details.valid_tools` listing all 25 valid tool names. |
-| Schema cleanup | `session_id` required on all tools; `additionalProperties: false` on all schemas. |
-
-### Phase 2 — Foreground-Independent Interactions
-Most interactions now work without bringing the target window to foreground.
-
-| Change | Detail |
-|---|---|
-| Pattern-first dispatch | `click` on a Button → `InvokePattern.Invoke()` (no foreground). CheckBox → `TogglePattern`. ListItem/MenuItem/TabItem → `SelectionItemPattern`. `enter_text` → `ValuePattern.SetValue()`. Falls back to `click_input`/`type_keys` only if the pattern fails. |
-| New actions | `toggle`, `expand_node`, `collapse_node`, `scroll_into_view` — all via UIA patterns, no foreground required. |
-| Proper foreground acquisition | Replaces the Alt-key hack with the documented Windows sequence: `AllowSetForegroundWindow` → `AttachThreadInput` → `BringWindowToTop` → `SetForegroundWindow` → `SwitchToThisWindow`. |
-| `restore_foreground_after_action` | Default `true`. After any action that required foreground, VSCode is restored to foreground automatically. Result includes `foreground_restored: bool`. |
-| Enriched interaction results | All interaction tools return `method`, `required_foreground`, `foreground_taken`, `foreground_restored`, `took_ms`. |
+Desktop MCP is a Model Context Protocol (MCP) server for AI-driven automation of Windows desktop applications. It exposes desktop UI controls as structured MCP tools so that AI agents can launch processes, inspect controls, enter text, click buttons, read grids, and capture screenshots — without relying on fragile screen coordinates and without requiring the target window to be in foreground.
 
 ---
 
 ## Capabilities
 
-- **Session Management**: Isolated automation sessions per agent workflow.
-- **Application Control**: Launch, attach to, or close applications.
-- **Window Management**: Window list, focus window, maximize, minimize, close, or wait for window creation (with real polling).
-- **Hierarchical Snapshots**: Recursive retrieval of UI automation trees with smart filtering. Empty trees raise `SNAPSHOT_EMPTY` with recovery hints instead of silently succeeding.
-- **Pattern-First Interactions**: UIA patterns (`Invoke`, `Toggle`, `Value`, `SelectionItem`, `ExpandCollapse`, `ScrollItem`) are tried before mouse synthesis — most actions work without foreground.
-- **Foreground Restoration**: VSCode stays in foreground throughout the agent session by default.
-- **Grid Framework**: Read, edit, search, and select row data from enterprise `DataGrid` and `Table` elements.
-- **Evidence Collection**: High-resolution screenshots, GIF recordings, and Markdown audit logs.
+- **Session Management** — Isolated automation sessions per agent workflow.
+- **Application Control** — Launch, attach to, or close applications by path or process ID.
+- **Window Management** — List windows, bring to focus, wait for a window to appear (with real polling), or close it.
+- **Control Discovery** — Snapshot a window's full control tree as a flat list or hierarchical tree. Empty trees return a structured error with a recovery hint instead of silently succeeding.
+- **Pattern-First Interactions** — UIA automation patterns (`InvokePattern`, `TogglePattern`, `ValuePattern`, `SelectionItemPattern`, `ExpandCollapsePattern`, `ScrollItemPattern`) are used before mouse synthesis. Most button clicks, text entry, and selections work without the target window being in foreground.
+- **Foreground Restoration** — After any action that required foreground, the previously-focused window (typically your IDE) is automatically restored.
+- **Grid Framework** — Read rows and columns from enterprise `DataGrid` and `Table` controls.
+- **Evidence Collection** — High-resolution screenshots, GIF recordings, and Markdown audit logs saved per session.
 
 ---
 
 ## Prerequisites
 
-- **Python**: version 3.12 or newer.
-- **Operating System**: Windows 10/11 (for UIA adapter).
-  - *Note*: An in-memory adapter is included for local development and testing on macOS/Linux.
-- **System Permissions**: Accessibility/UI Automation access enabled for the target applications.
+- **Python** 3.12 or newer
+- **Operating System** — Windows 10/11 for full UIA automation. An in-memory adapter is included for development and testing on macOS/Linux.
+- **System Permissions** — Accessibility/UI Automation access must be enabled for the target applications.
 
 ---
 
@@ -60,7 +29,7 @@ Most interactions now work without bringing the target window to foreground.
 
 ### Option A: Quick Setup (Recommended)
 
-Run the setup script for your platform to automatically create the virtual environment, install dependencies, and generate your custom MCP JSON config block:
+Run the setup script for your platform. It creates a virtual environment, installs all dependencies, and prints the MCP configuration block to paste into your AI client.
 
 #### Windows (PowerShell)
 ```powershell
@@ -77,138 +46,38 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 
 ### Option B: Manual Installation
 
-Create a virtual environment and install the package:
-
 ```bash
-# Create and activate environment
+# Create and activate a virtual environment
 python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-# Install in editable mode with development dependencies
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
-```
+# Install with development dependencies
+pip install --upgrade pip
+pip install -e ".[dev]"
 
-For Windows desktop automation, install the Windows extras:
-
-```bash
-python -m pip install -e ".[dev,windows]"
+# Windows: also install UIA/Win32 extras
+pip install -e ".[dev,windows]"
 ```
 
 ---
 
 ## Running the Server
 
-> [!NOTE]
-> You **do not** need to manually start or keep the server running in the background. Because this is a `stdio`-based MCP server, your AI client (e.g., Claude Desktop or Cursor) will automatically spawn the server process when it starts and stop it when it closes.
->
-> Simply complete the setup steps, add the generated configuration to your client's settings, and the client will manage the lifecycle of the server for you.
+> **You do not need to start the server manually.** Because this is a `stdio`-based MCP server, your AI client (Claude Desktop, Cursor, etc.) spawns and manages the server process automatically.
 
-If you want to run the stdio server manually for debugging or testing:
+To run manually for debugging:
 
 ```bash
 python -m desktop_mcp.server.stdio
-```
-
-If the package is installed in editable mode, you can also use:
-
-```bash
+# or, if installed in editable mode:
 desktop-mcp
 ```
 
-The server reads JSON-RPC requests from stdin and writes JSON-RPC responses to stdout.
-
 ---
 
-## Interaction Recorder (Codegen)
+## Configuring Your AI Client
 
-The Desktop MCP includes a UIA-native interaction recorder (similar to Playwright's Codegen) that listens to global UIA events on Windows and logs your manual inputs. It uses stable UIA properties (automation IDs, names, types) instead of fragile screen coordinates.
-
-### Running the Recorder
-
-We provide automated setup and execution scripts that handle elevating privileges, creating/activating virtual environments, and installing all platform prerequisites automatically.
-
-#### Quick Run (Recommended)
-- **Windows (PowerShell/CMD)**: Double-click or run `run_recorder.bat` (or execute `.\run_recorder.ps1` in PowerShell). This script will:
-  1. Detect if it is running as Administrator (relaunching with elevated privileges if needed).
-  2. Create/update the `.venv` virtual environment.
-  3. Install all Windows and UIA-specific dependencies automatically.
-  4. Launch the interaction recorder.
-  *Note*: You can specify a target application to focus and minimize distractions:
-  ```powershell
-  .\run_recorder.ps1 -a Calculator
-  # or
-  run_recorder.bat --app Calculator
-  ```
-- **macOS / Linux**: Run `./run_recorder.sh`. This will prepare the virtual environment and launch the recorder in simulated/mock mode.
-
-#### Manual/Global Run (Windows)
-1. Open a command prompt or PowerShell window **as Administrator** (required to listen to focus events across administrative applications).
-2. Start the recorder:
-   ```bash
-   desktop-mcp-recorder --app "Calculator"
-   ```
-   *Alternatively, run `python -m desktop_mcp.recorder.main -a "Calculator"`.*
-
-### UI and Console Controls
-
-#### 1. Interactive Config Screen (On Startup)
-If you start the recorder without specifying a target application via command-line arguments:
-
-> [!TIP]
-> **Open your target application first**: The dropdown list dynamically enumerates currently running/open windows. If your application is not running yet, open it before launching the recorder, or enter/browse to its executable path in the manual entry field to auto-launch it.
-
-- **Target Application Dropdown**: A search-as-you-type combobox containing all active window titles is displayed. Typing in the box filters the dropdown dynamically.
-- **Executable File Browser**: A manual path entry field with a **Browse...** button that opens a native file dialog so you can easily select a `.exe` binary.
-- **Workspace Minimization**: A checkbox to toggle whether all other windows are minimized on startup (enabled by default).
-- **Desktop Recording**: A fallback button to record the full desktop screen (no specific application focus/minimization).
-
-#### 2. Interactive Console Fallback Setup
-If Tkinter is not installed:
-- The terminal displays a **Console Setup Menu** showing a numbered list of all open window titles.
-- It prompts you to select a target application by entering its number, typing a title, entering a path, or pressing Enter to record the full desktop.
-
-#### 3. Recording Overlay & Controls
-- **Floating UI Overlay**: Once recording starts, a dark-themed, always-on-top floating window displays your captured actions in real-time.
-- **Dynamic Output Formats**: Select output view formats (Python pywinauto, Desktop MCP tools, or Action Log) using the **Format** dropdown on the right of the toolbar. You can switch formats at any time (**both while recording and after recording**).
-- **Pause & Resume**: Click **Pause** to temporarily suspend event logging, and click **Resume** to restart capturing.
-- **Stop & Graceful Close**: Click **Stop** to stop recording. The recorder will prompt you (Yes/No dialog) to ask if you want to close the target application under test, closing it gracefully if confirmed. Closing the recorder window also prompts to close the target app.
-- **Copy & Clear**: Click **Copy** to copy all recorded actions to your clipboard (without line numbers), and click **Clear** to clear the current logs.
-- **Mock Mode**: On macOS or Linux, the config wizard and recording overlay run in simulated/mock mode for developer testing.
-
----
-
-## Configuring the Adapter
-
-The Desktop MCP server dynamically selects the adapter to use:
-- **Default (Windows)**: Uses `WindowsUIAutomationAdapter` automatically when run on Windows (`win32`).
-- **Fallback**: On non-Windows platforms (macOS/Linux), it automatically falls back to `InMemoryDesktopAdapter`.
-- **Manual Override**: You can explicitly select the adapter by setting the `DESKTOP_MCP_ADAPTER` environment variable to either `"uia"` or `"memory"`.
-
----
-
-## Agent Configuration Examples
-
-### Claude Desktop / Cursor Settings
-
-Add this configuration to your client settings (`settings.json` or `claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "desktop-mcp": {
-      "command": "python",
-      "args": ["-m", "desktop_mcp.server.stdio"],
-      "cwd": "C:\\path\\to\\desktop-mcp",
-      "env": {
-        "DESKTOP_MCP_ADAPTER": "uia"
-      }
-    }
-  }
-}
-```
-
-If your agent runs inside a virtual environment, point the command to that environment's Python executable:
+After running the setup script, paste the printed configuration into your client's settings file (`settings.json` or `claude_desktop_config.json`):
 
 ```json
 {
@@ -222,93 +91,162 @@ If your agent runs inside a virtual environment, point the command to that envir
 }
 ```
 
----
+To force the in-memory adapter (useful for testing without a Windows machine):
 
-## Tool Categories
-
-The server exposes 25 core tools:
-
-### 1. Sessions
-- `create_session`: Creates a new session ID.
-- `close_session`: Teardown session and release locks.
-
-### 2. Applications
-- `launch_application`: Launch an application executable.
-- `attach_application`: Connect to a running process ID.
-- `close_application`: Closes the application.
-
-### 3. Windows
-- `list_windows`: Lists all top-level windows.
-- `activate_window`: Brings the window into focus. **Returns observable state** (`is_foreground`, `became_foreground`, `total_ms`) so the agent can verify success.
-- `wait_for_window`: **Polls** until a window with matching title appears (250 ms interval, configurable `timeout_ms`). Use immediately after `launch_application`.
-- `close_window`: Closes the target window.
-
-### 4. Snapshots & Discovery
-- `desktop_snapshot`: Returns a snapshot of **all** visible windows with their controls. Useful for initial discovery.
-- `window_snapshot`: **[Core Discovery]** Returns a flat list of all interactive controls. Returns `controls_count`, `capture_method`, `uia_state`. Raises `SNAPSHOT_EMPTY` (with recovery hint) instead of silently returning an empty list.
-- `control_tree`: Returns recursive, hierarchical control nodes with `tree_node_count`.
-
-### 5. Interactions
-- `click`: Interact with any element. **Pattern-first**: Button→`InvokePattern`, CheckBox→`TogglePattern`, ListItem/Tab/Radio→`SelectionItemPattern`. Accepts `action`: `left`, `right`, `double`, `hover`, `toggle`, `expand_node`, `collapse_node`, `scroll_into_view`. Supports `restore_foreground_after_action` (default `true`).
-- `enter_text`: Type text. Uses `ValuePattern.SetValue()` first (no foreground needed).
-- `read_text`: Extract text value from a control.
-- `press_keys`: Send raw PyWinAuto keys (e.g., `{TAB}`, `^c`) to a control or the active window.
-- `select_item`: Direct API for picking items from Dropdowns/ComboBoxes/ListBoxes via `SelectionItemPattern`.
-- `drag_drop`: Drag and drop from one control to another.
-
-### 6. Grids
-- `read_table`: Returns columns and rows from a DataGrid.
-
-### 7. Evidence & Reporting
-- `capture_window`: Screenshot of a specific window. Use as visual fallback when `window_snapshot` returns `SNAPSHOT_EMPTY`.
-- `capture_desktop`: Full desktop screenshot.
-- `start_recording` / `stop_recording`: Capture GIF evidence of workflows.
-- `generate_report`: Generates a Markdown audit log of the session.
-
-### 8. Coordinates (last resort)
-- `click_at`: Click at absolute screen coordinates. Requires foreground. Use only when no `control_id` is available.
+```json
+{
+  "mcpServers": {
+    "desktop-mcp": {
+      "command": "python",
+      "args": ["-m", "desktop_mcp.server.stdio"],
+      "cwd": "C:\\path\\to\\desktop-mcp",
+      "env": { "DESKTOP_MCP_ADAPTER": "memory" }
+    }
+  }
+}
+```
 
 ---
 
-## Agent Recovery Playbook
+## Tool Reference
 
-### Empty control tree after launch
-```
-launch_application
-  → wait_for_window (polls until window appears)
-  → window_snapshot
-      ↓ SNAPSHOT_EMPTY (isError: true)?
-  → activate_window  →  window_snapshot (retry)
-      ↓ still empty?
-  → capture_window  (visual fallback)
+The server exposes 25 tools. Every tool call returns the same envelope:
+
+```json
+{ "success": true,  "data": { ... }, "error": null,    "isError": false }
+{ "success": false, "data": null,    "error": { "code": "...", "message": "...", "details": {} }, "isError": true }
 ```
 
-### Foreground race (approval prompt stole focus)
+`isError: true` is the canonical MCP signal — check it before trusting `data`.
+
+### Sessions
+| Tool | Description |
+|---|---|
+| `create_session` | Start a new session. Returns `session_id`. Must be called first. |
+| `close_session` | End the session and release resources. |
+
+### Applications
+| Tool | Description |
+|---|---|
+| `launch_application` | Launch an executable by path. Returns `application_id`. |
+| `attach_application` | Attach to a running process by PID. |
+| `close_application` | Terminate an application and its children. |
+
+### Windows
+| Tool | Description |
+|---|---|
+| `list_windows` | List all visible top-level windows. |
+| `activate_window` | Bring a window to foreground. Returns `is_foreground`, `became_foreground`, `total_ms` so you can verify it worked. |
+| `wait_for_window` | Poll until a window with a matching title appears. Accepts `timeout_ms` (default 10 000). Returns `WINDOW_NOT_FOUND` on timeout. Use immediately after `launch_application`. |
+| `close_window` | Close a specific window. |
+
+### Snapshots & Discovery
+| Tool | Description |
+|---|---|
+| `desktop_snapshot` | Snapshot all visible windows with their controls. Good for initial discovery. |
+| `window_snapshot` | **Core discovery tool.** Returns a flat list of all interactive controls with `id`, `name`, `type`, `patterns`. Also returns `controls_count`, `uia_state` (`live`/`empty`/`denied`), `capture_method`, `took_ms`. Returns `SNAPSHOT_EMPTY` error (with a `hint`) if UIA returns no controls — never silently returns an empty list. |
+| `control_tree` | Hierarchical control tree. Returns `tree_node_count` and `took_ms`. |
+
+### Interactions
+| Tool | Description |
+|---|---|
+| `click` | Click a control. Uses UIA patterns first (no foreground needed for buttons, checkboxes, list items). `action` can be `left`, `right`, `double`, `hover`, `toggle`, `expand_node`, `collapse_node`, `scroll_into_view`. Set `restore_foreground_after_action: false` only when debugging. |
+| `enter_text` | Type text into a control. Uses `ValuePattern.SetValue()` first (no foreground needed). |
+| `read_text` | Read the current value of a control. |
+| `press_keys` | Send raw keystrokes (e.g. `{TAB}`, `{ENTER}`, `^c`). Essential for legacy apps. |
+| `select_item` | Select an item from a ComboBox or ListBox by value text. |
+| `drag_drop` | Drag from one control and drop onto another. |
+| `click_at` | Click at absolute screen coordinates. Last resort — use `control_id` when possible. |
+
+### Grids
+| Tool | Description |
+|---|---|
+| `read_table` | Read all rows and columns from a DataGrid or Table control. |
+
+### Evidence
+| Tool | Description |
+|---|---|
+| `capture_window` | Screenshot of a specific window. Use as visual fallback when `window_snapshot` returns `SNAPSHOT_EMPTY`. |
+| `capture_desktop` | Full desktop screenshot. |
+| `start_recording` / `stop_recording` | Record a GIF of the session. |
+| `generate_report` | Generate a Markdown audit log of all session actions. |
+
+---
+
+## Typical Agent Workflow
+
 ```
-click(control_id="ctrl_123", restore_foreground_after_action=true)
-  → method: "uia_invoke", required_foreground: false   ← ideal, no race possible
-  → method: "click_input", foreground_restored: true   ← VSCode restored after action
+create_session
+  → launch_application(path="C:\\Windows\\System32\\calc.exe")
+  → wait_for_window(title_contains="Calculator", timeout_ms=10000)
+  → window_snapshot(window_id="win_...")
+      controls_count: 32, uia_state: "live"
+      → agent sees buttons: "Seven", "Plus", "Three", "Equals", "display"
+  → click(control_id="ctrl_...", action="left")   # method: uia_invoke, required_foreground: false
+  → click(control_id="ctrl_...")                  # Plus
+  → click(control_id="ctrl_...")                  # Three
+  → click(control_id="ctrl_...")                  # Equals
+  → read_text(control_id="ctrl_...")              # value: "10"
+  → close_session
 ```
 
-### Unknown tool name
+## Recovery Patterns
+
+**Empty control tree:**
+```
+window_snapshot → SNAPSHOT_EMPTY
+  → activate_window → window_snapshot (retry)
+  → still empty? → capture_window (visual fallback)
+```
+
+**Unknown tool name:**
 ```
 error.code == "UNKNOWN_TOOL"
-  → error.details.valid_tools  ← full list of valid tool names
+  → error.details.valid_tools  ← full list of 25 valid tool names
 ```
+
+---
+
+## Interaction Recorder
+
+Desktop MCP includes a UIA-native interaction recorder (similar to Playwright Codegen) that captures your manual interactions and outputs them as Desktop MCP tool calls.
+
+### Windows (PowerShell — recommended)
+```powershell
+.\run_recorder.ps1 -a Calculator
+```
+The script auto-elevates to Administrator, creates/updates the virtual environment, and launches the recorder.
+
+### Windows (CMD)
+```cmd
+run_recorder.bat --app Calculator
+```
+
+### macOS / Linux (mock mode)
+```bash
+./run_recorder.sh
+```
+
+### Manual
+```bash
+desktop-mcp-recorder --app "Calculator"
+# or
+python -m desktop_mcp.recorder.main -a "Calculator"
+```
+
+The recorder UI shows captured actions in real time. Use the **Format** dropdown to switch between Python pywinauto, Desktop MCP tools, or Action Log output. You can switch formats while recording or after.
 
 ---
 
 ## Running Tests
 
-Verify your installation by running the test suite:
-
 ```bash
 python -m pytest
 ```
 
-Expected result:
+Expected:
 
-```text
+```
 123 passed
 ```
 
@@ -316,4 +254,4 @@ Expected result:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
